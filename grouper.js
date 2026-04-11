@@ -1,0 +1,443 @@
+// grouper.js - Drive grouping, FSD analytics, metrics calculation
+// Faithful port of Sentry-USB server/drives/grouper.go
+
+import { GEAR_PARK, AUTOPILOT_OFF } from "./extract.js";
+
+const DRIVE_GAP_MS = 5 * 60 * 1000; // 5 minutes
+const PARK_GAP_SECONDS = 2.0;
+
+const FILE_TIMESTAMP_RE = /(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/;
+
+/**
+ * Parse a Tesla dashcam filename into a Date object.
+ */
+function parseFileTimestamp(filePath) {
+  const m = FILE_TIMESTAMP_RE.exec(filePath);
+  if (!m) return null;
+  const s = `${m[1]}T${m[2]}:${m[3]}:${m[4]}`;
+  const t = new Date(s);
+  return isNaN(t.getTime()) ? null : t;
+}
+
+/**
+ * Haversine distance in meters between two GPS coordinates.
+ */
+function haversineM(lat1, lon1, lat2, lon2) {
+  const R = 6371000.0;
+  const toRad = (d) => (d * Math.PI) / 180.0;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Group routes into logical drives based on time gaps and gear state.
+ */
+export function groupIntoDrives(routes) {
+  // Deduplicate routes by normalized file path
+  const seen = new Set();
+  const unique = [];
+  for (const r of routes) {
+    const norm = r.file.replace(/\\/g, "/");
+    if (!seen.has(norm)) {
+      seen.add(norm);
+      unique.push(r);
+    }
+  }
+
+  // Parse timestamps and sort
+  const timed = [];
+  for (const r of unique) {
+    const t = parseFileTimestamp(r.file);
+    if (t) timed.push({ ...r, timestamp: t });
+  }
+
+  if (timed.length === 0) return [];
+
+  timed.sort((a, b) => a.timestamp - b.timestamp);
+
+  // First pass: group by time gap
+  const timeGroups = [];
+  let current = [timed[0]];
+
+  for (let i = 1; i < timed.length; i++) {
+    const gap = timed[i].timestamp - current[current.length - 1].timestamp;
+    if (gap > DRIVE_GAP_MS) {
+      timeGroups.push(current);
+      current = [timed[i]];
+    } else {
+      current.push(timed[i]);
+    }
+  }
+  timeGroups.push(current);
+
+  // Second pass: split each time group further by gear state
+  const groups = [];
+  for (const tg of timeGroups) {
+    groups.push(...splitByGearState(tg));
+  }
+
+  // Build drive stats
+  return groups.map((group, idx) => buildDriveStats(group, idx));
+}
+
+function splitByGearState(group) {
+  if (group.length === 0) return [];
+
+  const hasGearRuns = group.some((clip) => clip.gearRuns && clip.gearRuns.length > 0);
+  if (!hasGearRuns) return splitByGearStateLegacy(group);
+
+  const result = [];
+  let current = [];
+
+  for (const clip of group) {
+    if (!clip.gearRuns || clip.gearRuns.length === 0) {
+      current.push(clip);
+      continue;
+    }
+
+    const segments = splitClipAtParkGaps(clip);
+    for (const seg of segments) {
+      if (seg.parked) {
+        if (current.length > 0) {
+          result.push(current);
+          current = [];
+        }
+      } else if (seg.route.points.length > 0) {
+        current.push(seg.route);
+      }
+    }
+  }
+  if (current.length > 0) result.push(current);
+  if (result.length === 0) return [group];
+  return result;
+}
+
+function splitClipAtParkGaps(clip) {
+  let totalRawFrames = 0;
+  for (const run of clip.gearRuns) totalRawFrames += run.frames;
+  if (totalRawFrames === 0) return [{ route: clip, parked: false }];
+
+  const secondsPerFrame = 60.0 / totalRawFrames;
+  const nPoints = clip.points.length;
+
+  // Identify raw segments
+  const rawSegs = [];
+  let frame = 0;
+  for (const run of clip.gearRuns) {
+    const duration = run.frames * secondsPerFrame;
+    const isParkGap = run.gear === GEAR_PARK && duration >= PARK_GAP_SECONDS;
+    rawSegs.push({ startFrame: frame, endFrame: frame + run.frames, parked: isParkGap });
+    frame += run.frames;
+  }
+
+  // Merge consecutive non-parked segments
+  const merged = [];
+  for (const seg of rawSegs) {
+    if (merged.length > 0 && !merged[merged.length - 1].parked && !seg.parked) {
+      merged[merged.length - 1].endFrame = seg.endFrame;
+    } else {
+      merged.push({ ...seg });
+    }
+  }
+
+  if (!merged.some((s) => s.parked)) return [{ route: clip, parked: false }];
+
+  const result = [];
+  for (const seg of merged) {
+    if (seg.parked) {
+      result.push({ route: null, parked: true });
+      continue;
+    }
+
+    const startFrac = seg.startFrame / totalRawFrames;
+    const endFrac = seg.endFrame / totalRawFrames;
+    let startIdx = Math.round(startFrac * nPoints);
+    let endIdx = Math.round(endFrac * nPoints);
+    if (startIdx >= nPoints) startIdx = nPoints - 1;
+    if (endIdx > nPoints) endIdx = nPoints;
+    if (startIdx < 0) startIdx = 0;
+    if (endIdx <= startIdx) continue;
+
+    const segPoints = clip.points.slice(startIdx, endIdx);
+    const segGears = clip.gearStates ? clip.gearStates.slice(startIdx, endIdx) : [];
+    const segAP = clip.autopilotStates ? clip.autopilotStates.slice(startIdx, endIdx) : [];
+    const segSpeeds = clip.speeds ? clip.speeds.slice(startIdx, endIdx) : [];
+    const segAccel = clip.accelPositions ? clip.accelPositions.slice(startIdx, endIdx) : [];
+
+    const offsetMs = startFrac * 60000;
+    result.push({
+      route: {
+        ...clip,
+        points: segPoints,
+        gearStates: segGears,
+        autopilotStates: segAP,
+        speeds: segSpeeds,
+        accelPositions: segAccel,
+        timestamp: new Date(clip.timestamp.getTime() + offsetMs),
+      },
+      parked: false,
+    });
+  }
+
+  return result;
+}
+
+function splitByGearStateLegacy(group) {
+  if (group.length <= 1) return [group];
+  if (!group.some((clip) => clip.gearStates && clip.gearStates.length > 0)) return [group];
+
+  const result = [];
+  let current = [];
+
+  for (const clip of group) {
+    if (clipIsMostlyParkedLegacy(clip)) {
+      if (current.length > 0) {
+        result.push(current);
+        current = [];
+      }
+    } else {
+      current.push(clip);
+    }
+  }
+  if (current.length > 0) result.push(current);
+  if (result.length === 0) return [group];
+  return result;
+}
+
+function clipIsMostlyParkedLegacy(clip) {
+  if (clip.rawFrameCount > 0) {
+    return clip.rawParkCount / clip.rawFrameCount > 0.5;
+  }
+  if (!clip.gearStates || clip.gearStates.length === 0) return false;
+  let parkCount = 0;
+  for (const g of clip.gearStates) {
+    if (g === GEAR_PARK) parkCount++;
+  }
+  return parkCount > clip.gearStates.length / 2;
+}
+
+function buildDriveStats(clips, idx) {
+  const firstClip = clips[0];
+  const lastClip = clips[clips.length - 1];
+  const startTime = firstClip.timestamp;
+  const endTime = new Date(lastClip.timestamp.getTime() + 60000);
+
+  // Merge all points with interpolated timestamps
+  const allPoints = [];
+  for (const clip of clips) {
+    const clipStart = clip.timestamp.getTime();
+    const n = clip.points.length;
+    const clipDurationMs = 60000;
+    const hasAP = clip.autopilotStates && clip.autopilotStates.length === n;
+    const hasGears = clip.gearStates && clip.gearStates.length === n;
+    const hasSpeeds = clip.speeds && clip.speeds.length === n;
+    const hasAccel = clip.accelPositions && clip.accelPositions.length === n;
+
+    for (let i = 0; i < n; i++) {
+      let t;
+      if (n > 1) {
+        t = clipStart + (clipDurationMs * i) / (n - 1);
+      } else {
+        t = clipStart;
+      }
+      allPoints.push({
+        lat: clip.points[i][0],
+        lng: clip.points[i][1],
+        timeMs: t,
+        apState: hasAP ? clip.autopilotStates[i] : 0,
+        gear: hasGears ? clip.gearStates[i] : 0,
+        seiSpeed: hasSpeeds ? clip.speeds[i] : 0,
+        accelPos: hasAccel ? clip.accelPositions[i] : 0,
+      });
+    }
+  }
+
+  // Compute distance and speeds
+  let totalDistanceM = 0;
+  let maxSpeedMps = 0;
+  const speedSamples = [];
+
+  const hasSEISpeeds = allPoints.some((p) => p.seiSpeed > 0);
+
+  for (let i = 1; i < allPoints.length; i++) {
+    const d = haversineM(
+      allPoints[i - 1].lat, allPoints[i - 1].lng,
+      allPoints[i].lat, allPoints[i].lng
+    );
+    totalDistanceM += d;
+
+    if (hasSEISpeeds) {
+      const speed = allPoints[i].seiSpeed;
+      if (speed >= 0 && speed < 100) {
+        speedSamples.push(speed);
+        if (speed > maxSpeedMps) maxSpeedMps = speed;
+      }
+    } else {
+      const dt = (allPoints[i].timeMs - allPoints[i - 1].timeMs) / 1000.0;
+      if (dt > 0) {
+        const speed = d / dt;
+        if (speed < 70) {
+          speedSamples.push(speed);
+          if (speed > maxSpeedMps) maxSpeedMps = speed;
+        }
+      }
+    }
+  }
+
+  let avgSpeedMps = 0;
+  if (speedSamples.length > 0) {
+    avgSpeedMps = speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length;
+  }
+
+  // Build point data array: [lat, lng, timeMs, speedMps]
+  const pointData = [];
+  const fsdStates = [];
+  let hasFSDData = false;
+
+  for (let i = 0; i < allPoints.length; i++) {
+    const p = allPoints[i];
+    let speed;
+    if (hasSEISpeeds) {
+      speed = p.seiSpeed;
+    } else if (i > 0) {
+      const d = haversineM(allPoints[i - 1].lat, allPoints[i - 1].lng, p.lat, p.lng);
+      const dt = (p.timeMs - allPoints[i - 1].timeMs) / 1000.0;
+      speed = dt > 0 ? Math.min(d / dt, 70) : 0;
+    } else {
+      speed = 0;
+    }
+    pointData.push([p.lat, p.lng, p.timeMs, Math.round(speed * 100) / 100]);
+    fsdStates.push(p.apState);
+    if (p.apState !== AUTOPILOT_OFF) hasFSDData = true;
+  }
+
+  // Compute FSD analytics
+  let fsdEngagedMs = 0;
+  let fsdDisengagements = 0;
+  let fsdAccelPushes = 0;
+  let fsdDistanceM = 0;
+  let fsdEvents = [];
+
+  if (hasFSDData && allPoints.length > 1) {
+    let inAccelPress = false;
+    let accelPressLat = 0, accelPressLng = 0;
+    let fsdEngageTimeMs = 0;
+    let pendingDisengage = false;
+    let pendingDisengageTimeMs = 0;
+    let pendingDisengageLat = 0, pendingDisengageLng = 0;
+
+    for (let i = 1; i < allPoints.length; i++) {
+      const prev = allPoints[i - 1];
+      const cur = allPoints[i];
+      const dt = cur.timeMs - prev.timeMs;
+      const d = haversineM(prev.lat, prev.lng, cur.lat, cur.lng);
+
+      const prevEngaged = prev.apState !== AUTOPILOT_OFF;
+      const curEngaged = cur.apState !== AUTOPILOT_OFF;
+
+      // Resolve pending disengagement
+      if (pendingDisengage) {
+        const timeSince = cur.timeMs - pendingDisengageTimeMs;
+        if (cur.gear === GEAR_PARK && timeSince <= 2000.0) {
+          pendingDisengage = false;
+        } else if (timeSince > 2000.0 || curEngaged) {
+          fsdDisengagements++;
+          fsdEvents.push({ lat: pendingDisengageLat, lng: pendingDisengageLng, type: "disengagement" });
+          pendingDisengage = false;
+        }
+      }
+
+      // Track FSD engagement
+      if (!prevEngaged && curEngaged) {
+        inAccelPress = false;
+        fsdEngageTimeMs = cur.timeMs;
+      }
+
+      // Count engaged time and distance
+      if (curEngaged) {
+        fsdEngagedMs += dt;
+        fsdDistanceM += d;
+      }
+
+      // Detect disengagement
+      if (prevEngaged && !curEngaged) {
+        pendingDisengage = true;
+        pendingDisengageTimeMs = cur.timeMs;
+        pendingDisengageLat = cur.lat;
+        pendingDisengageLng = cur.lng;
+        inAccelPress = false;
+      }
+
+      // Normalize pedal position
+      let accelPct = cur.accelPos;
+      if (accelPct <= 1.0) accelPct *= 100.0;
+
+      // Detect accel press while FSD active
+      if (curEngaged && !inAccelPress && accelPct > 1.0 && cur.timeMs - fsdEngageTimeMs >= 3000.0) {
+        inAccelPress = true;
+        accelPressLat = cur.lat;
+        accelPressLng = cur.lng;
+      }
+
+      // Press complete when pedal returns to 0%
+      if (inAccelPress && accelPct <= 0.0) {
+        fsdAccelPushes++;
+        fsdEvents.push({ lat: accelPressLat, lng: accelPressLng, type: "accel_push" });
+        inAccelPress = false;
+      }
+    }
+
+    // Flush pending disengagement
+    if (pendingDisengage && allPoints.length > 0) {
+      if (allPoints[allPoints.length - 1].gear !== GEAR_PARK) {
+        fsdDisengagements++;
+        fsdEvents.push({ lat: pendingDisengageLat, lng: pendingDisengageLng, type: "disengagement" });
+      }
+    }
+  }
+
+  const durationMs = endTime.getTime() - startTime.getTime();
+  let fsdPercent = 0;
+  if (totalDistanceM > 0) {
+    fsdPercent = Math.round((fsdDistanceM / totalDistanceM) * 1000) / 10;
+  }
+
+  const r2 = (v) => Math.round(v * 100) / 100;
+
+  return {
+    id: idx,
+    date: firstClip.date,
+    startTime: formatISO(startTime),
+    endTime: formatISO(endTime),
+    durationMs,
+    distanceMi: r2(totalDistanceM / 1609.344),
+    distanceKm: r2(totalDistanceM / 1000),
+    avgSpeedMph: r2(avgSpeedMps * 2.23694),
+    maxSpeedMph: r2(maxSpeedMps * 2.23694),
+    avgSpeedKmh: r2(avgSpeedMps * 3.6),
+    maxSpeedKmh: r2(maxSpeedMps * 3.6),
+    clipCount: clips.length,
+    pointCount: allPoints.length,
+    points: pointData,
+    fsdStates: hasFSDData ? fsdStates : undefined,
+    fsdEvents: fsdEvents.length > 0 ? fsdEvents : undefined,
+    fsdEngagedMs: Math.round(fsdEngagedMs),
+    fsdDisengagements,
+    fsdAccelPushes,
+    fsdPercent,
+    fsdDistanceKm: r2(fsdDistanceM / 1000),
+    fsdDistanceMi: r2(fsdDistanceM / 1609.344),
+  };
+}
+
+function formatISO(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}

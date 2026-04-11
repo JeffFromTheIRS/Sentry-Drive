@@ -1,0 +1,95 @@
+// worker.js - Worker thread for parallel GPS extraction
+import { parentPort, workerData } from "node:worker_threads";
+import { extractGPSFromFile } from "./extract.js";
+
+const { files, workerId } = workerData;
+
+const results = [];
+let count = 0;
+
+for (const f of files) {
+  count++;
+  if (count % 100 === 0) {
+    parentPort.postMessage({ type: "progress", workerId, count, total: files.length });
+  }
+
+  try {
+    const data = await extractGPSFromFile(f.fullPath);
+    if (data && data.points.length > 0) {
+      const gearRuns = computeGearRuns(data.gears);
+      const rawFrameCount = data.gears.length;
+      let rawParkCount = 0;
+      for (const g of data.gears) {
+        if (g === 0) rawParkCount++;
+      }
+
+      const deduped = deduplicatePoints(
+        data.points, data.gears, data.apStates, data.speeds, data.accelPositions
+      );
+
+      if (deduped.points.length > 0) {
+        results.push({
+          relativePath: f.relativePath,
+          dateDir: f.dateDir,
+          points: deduped.points,
+          gearStates: deduped.gears,
+          autopilotStates: deduped.apStates,
+          speeds: deduped.speeds,
+          accelPositions: deduped.accelPositions,
+          rawParkCount,
+          rawFrameCount,
+          gearRuns,
+          hasGPS: true,
+        });
+      } else {
+        results.push({ relativePath: f.relativePath, hasGPS: false });
+      }
+    } else {
+      results.push({ relativePath: f.relativePath, hasGPS: false });
+    }
+  } catch (err) {
+    results.push({ relativePath: f.relativePath, hasGPS: false, error: err.message });
+  }
+}
+
+parentPort.postMessage({ type: "done", results });
+
+function computeGearRuns(gears) {
+  if (gears.length === 0) return [];
+  const runs = [];
+  let currentGear = gears[0];
+  let count = 1;
+  for (let i = 1; i < gears.length; i++) {
+    if (gears[i] === currentGear) {
+      count++;
+    } else {
+      runs.push({ gear: currentGear, frames: count });
+      currentGear = gears[i];
+      count = 1;
+    }
+  }
+  runs.push({ gear: currentGear, frames: count });
+  return runs;
+}
+
+function deduplicatePoints(points, gears, apStates, speeds, accelPositions) {
+  if (points.length === 0) return { points: [], gears: [], apStates: [], speeds: [], accelPositions: [] };
+
+  const dp = [points[0]];
+  const dg = [gears[0]];
+  const da = [apStates[0]];
+  const ds = [speeds[0]];
+  const dac = [accelPositions[0]];
+
+  for (let i = 1; i < points.length; i++) {
+    if (points[i][0] !== points[i - 1][0] || points[i][1] !== points[i - 1][1]) {
+      dp.push(points[i]);
+      dg.push(gears[i]);
+      da.push(apStates[i]);
+      ds.push(speeds[i]);
+      dac.push(accelPositions[i]);
+    }
+  }
+
+  return { points: dp, gears: dg, apStates: da, speeds: ds, accelPositions: dac };
+}
