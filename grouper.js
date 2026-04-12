@@ -1,7 +1,7 @@
 // grouper.js - Drive grouping, FSD analytics, metrics calculation
 // Faithful port of Sentry-USB server/drives/grouper.go
 
-import { GEAR_PARK, AUTOPILOT_OFF } from "./extract.js";
+import { GEAR_PARK, AUTOPILOT_OFF, AUTOPILOT_FSD, AUTOPILOT_AUTOSTEER, AUTOPILOT_TACC } from "./extract.js";
 
 const DRIVE_GAP_MS = 5 * 60 * 1000; // 5 minutes
 const PARK_GAP_SECONDS = 2.0;
@@ -299,7 +299,9 @@ function buildDriveStats(clips, idx) {
   // Build point data array: [lat, lng, timeMs, speedMps]
   const pointData = [];
   const fsdStates = [];
-  let hasFSDData = false;
+  const gearStates = [];
+  let hasAssistedData = false;
+  let hasGearData = false;
 
   for (let i = 0; i < allPoints.length; i++) {
     const p = allPoints[i];
@@ -315,17 +317,21 @@ function buildDriveStats(clips, idx) {
     }
     pointData.push([p.lat, p.lng, p.timeMs, Math.round(speed * 100) / 100]);
     fsdStates.push(p.apState);
-    if (p.apState !== AUTOPILOT_OFF) hasFSDData = true;
+    gearStates.push(p.gear);
+    if (p.apState !== AUTOPILOT_OFF) hasAssistedData = true;
+    if (p.gear !== GEAR_PARK) hasGearData = true;
   }
 
-  // Compute FSD analytics
-  let fsdEngagedMs = 0;
-  let fsdDisengagements = 0;
-  let fsdAccelPushes = 0;
-  let fsdDistanceM = 0;
-  let fsdEvents = [];
+  // Compute per-mode analytics.
+  // Disengagements and accel pushes are FSD (state=1) only — same as Sentry-USB.
+  // Autosteer (state=2) and TACC (state=3) get time/distance tracking only.
+  let fsdEngagedMs = 0, fsdDisengagements = 0, fsdAccelPushes = 0, fsdDistanceM = 0;
+  let autosteerEngagedMs = 0, autosteerDistanceM = 0;
+  let taccEngagedMs = 0, taccDistanceM = 0;
+  let assistedDistanceM = 0;
+  const fsdEvents = [];
 
-  if (hasFSDData && allPoints.length > 1) {
+  if (hasAssistedData && allPoints.length > 1) {
     let inAccelPress = false;
     let accelPressLat = 0, accelPressLng = 0;
     let fsdEngageTimeMs = 0;
@@ -339,35 +345,50 @@ function buildDriveStats(clips, idx) {
       const dt = cur.timeMs - prev.timeMs;
       const d = haversineM(prev.lat, prev.lng, cur.lat, cur.lng);
 
-      const prevEngaged = prev.apState !== AUTOPILOT_OFF;
+      const prevFSD = prev.apState === AUTOPILOT_FSD;
+      const curFSD  = cur.apState  === AUTOPILOT_FSD;
       const curEngaged = cur.apState !== AUTOPILOT_OFF;
 
-      // Resolve pending disengagement
+      // Resolve pending FSD disengagement (2-second Park grace window)
       if (pendingDisengage) {
         const timeSince = cur.timeMs - pendingDisengageTimeMs;
         if (cur.gear === GEAR_PARK && timeSince <= 2000.0) {
+          // FSD parked the car — not a driver disengagement
           pendingDisengage = false;
-        } else if (timeSince > 2000.0 || curEngaged) {
+        } else if (timeSince > 2000.0 || curFSD) {
           fsdDisengagements++;
           fsdEvents.push({ lat: pendingDisengageLat, lng: pendingDisengageLng, type: "disengagement" });
           pendingDisengage = false;
         }
       }
 
-      // Track FSD engagement
-      if (!prevEngaged && curEngaged) {
+      // Track FSD engagement start (state=1 only)
+      if (!prevFSD && curFSD) {
         inAccelPress = false;
         fsdEngageTimeMs = cur.timeMs;
       }
 
-      // Count engaged time and distance
+      // Accumulate time and distance per mode
       if (curEngaged) {
-        fsdEngagedMs += dt;
-        fsdDistanceM += d;
+        assistedDistanceM += d;
+        switch (cur.apState) {
+          case AUTOPILOT_FSD:
+            fsdEngagedMs += dt;
+            fsdDistanceM += d;
+            break;
+          case AUTOPILOT_AUTOSTEER:
+            autosteerEngagedMs += dt;
+            autosteerDistanceM += d;
+            break;
+          case AUTOPILOT_TACC:
+            taccEngagedMs += dt;
+            taccDistanceM += d;
+            break;
+        }
       }
 
-      // Detect disengagement
-      if (prevEngaged && !curEngaged) {
+      // Detect FSD disengagement (state=1 only)
+      if (prevFSD && !curFSD) {
         pendingDisengage = true;
         pendingDisengageTimeMs = cur.timeMs;
         pendingDisengageLat = cur.lat;
@@ -375,12 +396,13 @@ function buildDriveStats(clips, idx) {
         inAccelPress = false;
       }
 
-      // Normalize pedal position
+      // Normalize pedal position to 0-100%
       let accelPct = cur.accelPos;
       if (accelPct <= 1.0) accelPct *= 100.0;
 
-      // Detect accel press while FSD active
-      if (curEngaged && !inAccelPress && accelPct > 1.0 && cur.timeMs - fsdEngageTimeMs >= 3000.0) {
+      // Detect human accel press while FSD active (state=1 only).
+      // Skip 3-second grace window after FSD engagement.
+      if (curFSD && !inAccelPress && accelPct > 1.0 && cur.timeMs - fsdEngageTimeMs >= 3000.0) {
         inAccelPress = true;
         accelPressLat = cur.lat;
         accelPressLng = cur.lng;
@@ -394,7 +416,7 @@ function buildDriveStats(clips, idx) {
       }
     }
 
-    // Flush pending disengagement
+    // Flush any pending disengagement at drive end
     if (pendingDisengage && allPoints.length > 0) {
       if (allPoints[allPoints.length - 1].gear !== GEAR_PARK) {
         fsdDisengagements++;
@@ -404,12 +426,8 @@ function buildDriveStats(clips, idx) {
   }
 
   const durationMs = endTime.getTime() - startTime.getTime();
-  let fsdPercent = 0;
-  if (totalDistanceM > 0) {
-    fsdPercent = Math.round((fsdDistanceM / totalDistanceM) * 1000) / 10;
-  }
-
   const r2 = (v) => Math.round(v * 100) / 100;
+  const pct = (part) => totalDistanceM > 0 ? Math.round((part / totalDistanceM) * 1000) / 10 : 0;
 
   return {
     id: idx,
@@ -426,14 +444,28 @@ function buildDriveStats(clips, idx) {
     clipCount: clips.length,
     pointCount: allPoints.length,
     points: pointData,
-    fsdStates: hasFSDData ? fsdStates : undefined,
+    gearStates: hasGearData ? gearStates : undefined,
+    fsdStates: hasAssistedData ? fsdStates : undefined,
     fsdEvents: fsdEvents.length > 0 ? fsdEvents : undefined,
+    // FSD (state=1) — disengagements and accel pushes tracked here only
     fsdEngagedMs: Math.round(fsdEngagedMs),
     fsdDisengagements,
     fsdAccelPushes,
-    fsdPercent,
+    fsdPercent: pct(fsdDistanceM),
     fsdDistanceKm: r2(fsdDistanceM / 1000),
     fsdDistanceMi: r2(fsdDistanceM / 1609.344),
+    // Autosteer (state=2)
+    autosteerEngagedMs: Math.round(autosteerEngagedMs),
+    autosteerPercent: pct(autosteerDistanceM),
+    autosteerDistanceKm: r2(autosteerDistanceM / 1000),
+    autosteerDistanceMi: r2(autosteerDistanceM / 1609.344),
+    // TACC (state=3)
+    taccEngagedMs: Math.round(taccEngagedMs),
+    taccPercent: pct(taccDistanceM),
+    taccDistanceKm: r2(taccDistanceM / 1000),
+    taccDistanceMi: r2(taccDistanceM / 1609.344),
+    // Assisted aggregate (any state > 0 — for map/UI use)
+    assistedPercent: pct(assistedDistanceM),
   };
 }
 

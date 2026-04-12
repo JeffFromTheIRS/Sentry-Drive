@@ -1,6 +1,14 @@
 {
-  "name": "drives-processor",
+  "name": "sentry-drive",
   "version": "1.0.0",
   "type": "module",
-  "description": "Standalone Tesla dashcam drives processor - replicates Sentry USB drives processing"
+  "description": "Standalone Tesla dashcam drives processor - replicates Sentry USB drives processing",
+  "main": "electron-main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "process": "node process.js"
+  },
+  "devDependencies": {
+    "electron": "^29.4.6"
+  }
 }

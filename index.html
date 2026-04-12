@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self' https://unpkg.com;
+    style-src 'self' 'unsafe-inline' https://unpkg.com;
+    img-src 'self' data: blob: https://unpkg.com https://*.basemaps.cartocdn.com https://*.openstreetmap.org;
+    connect-src https://*.basemaps.cartocdn.com https://unpkg.com;
+  " />
+  <title>Sentry Drive</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Left Panel ──────────────────────────────────────────────── -->
+    <div id="left-panel">
+
+      <div id="app-header">
+        <div id="app-logo">SD</div>
+        <div id="app-title">Sentry Drive</div>
+      </div>
+
+      <div id="tab-bar">
+        <button class="tab-btn active" data-tab="processing">Processing</button>
+        <button class="tab-btn" data-tab="drives">View Drives</button>
+      </div>
+
+      <!-- Processing Tab -->
+      <div id="tab-processing" class="tab-pane active">
+
+        <div class="field-group">
+          <label class="field-label">Clips Directory</label>
+          <div class="input-row">
+            <input id="clips-dir" type="text" class="text-input" placeholder="Z:\RecentClips" />
+            <button id="browse-clips" class="btn-icon" title="Browse">&#128193;</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Output File</label>
+          <div class="input-row">
+            <input id="output-path" type="text" class="text-input" placeholder="drive-data.json" />
+            <button id="browse-output" class="btn-icon" title="Browse">&#128193;</button>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">
+            <div class="worker-label-row">
+              <span>Workers <span id="worker-count-display" class="worker-count-val">—</span></span>
+              <button id="btn-auto-workers" class="btn-auto">Auto</button>
+            </div>
+          </label>
+          <input id="worker-count" type="range" class="slider" min="1" max="32" value="4" />
+        </div>
+
+        <div class="btn-row">
+          <button id="btn-start" class="btn-primary">Start Processing</button>
+          <button id="btn-stop" class="btn-danger" disabled>Stop</button>
+        </div>
+
+        <div id="progress-section" class="hidden">
+          <div class="progress-top">
+            <div id="progress-track"><div id="progress-bar"></div></div>
+            <div id="progress-label">0%</div>
+          </div>
+          <div id="eta-label"></div>
+        </div>
+
+        <div id="log-output"></div>
+
+      </div>
+
+      <!-- View Drives Tab -->
+      <div id="tab-drives" class="tab-pane">
+
+        <button id="btn-load-drives" class="btn-primary">Load Drives</button>
+
+        <div id="drives-stats"></div>
+        <div id="drives-list"></div>
+
+      </div>
+
+    </div>
+
+    <!-- ── Map Panel ────────────────────────────────────────────────── -->
+    <div id="map-container">
+      <div id="map"></div>
+      <div id="drive-info-panel" class="hidden"></div>
+      <div id="map-legend" class="hidden">
+        <span class="legend-item"><span class="legend-swatch fsd-on"></span>Assisted</span>
+        <span class="legend-item"><span class="legend-swatch fsd-off"></span>Manual</span>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

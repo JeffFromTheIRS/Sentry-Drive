@@ -14,7 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const CLIPS_DIR = process.argv[2] || "Z:\\RecentClips";
 const OUTPUT_PATH = process.argv[3] || path.join(__dirname, "drive-data.json");
-const NUM_WORKERS = Math.max(1, os.cpus().length - 1);
+const NUM_WORKERS = process.argv[4]
+  ? Math.max(1, parseInt(process.argv[4], 10))
+  : Math.max(1, os.cpus().length - 1);
 
 async function discoverFrontCameraFiles(clipsDir) {
   const files = [];

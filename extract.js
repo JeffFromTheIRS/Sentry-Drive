@@ -8,9 +8,12 @@ const GEAR_PARK = 0;
 const GEAR_DRIVE = 1;
 const GEAR_REVERSE = 2;
 const GEAR_NEUTRAL = 3;
-const AUTOPILOT_OFF = 0;
+const AUTOPILOT_OFF       = 0;
+const AUTOPILOT_FSD       = 1;
+const AUTOPILOT_AUTOSTEER = 2;
+const AUTOPILOT_TACC      = 3;
 
-export { GEAR_PARK, GEAR_DRIVE, GEAR_REVERSE, GEAR_NEUTRAL, AUTOPILOT_OFF };
+export { GEAR_PARK, GEAR_DRIVE, GEAR_REVERSE, GEAR_NEUTRAL, AUTOPILOT_OFF, AUTOPILOT_FSD, AUTOPILOT_AUTOSTEER, AUTOPILOT_TACC };
 
 /**
  * Extract GPS points, gear states, autopilot states, speeds, and accel positions
