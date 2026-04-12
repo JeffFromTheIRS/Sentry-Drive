@@ -3,7 +3,7 @@
 
 import { GEAR_PARK, AUTOPILOT_OFF, AUTOPILOT_FSD, AUTOPILOT_AUTOSTEER, AUTOPILOT_TACC } from "./extract.js";
 
-const DRIVE_GAP_MS = 5 * 60 * 1000; // 5 minutes
+const DRIVE_GAP_MS = 2 * 60 * 1000; // 2 minutes
 const PARK_GAP_SECONDS = 2.0;
 
 const FILE_TIMESTAMP_RE = /(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/;
@@ -58,7 +58,7 @@ export function groupIntoDrives(routes) {
     if (t) timed.push({ ...r, timestamp: t });
   }
 
-  if (timed.length === 0) return [];
+  if (timed.length === 0) return { drives: [], timeGroupCount: 0, routeCount: 0, droppedCount: unique.length };
 
   timed.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -84,7 +84,13 @@ export function groupIntoDrives(routes) {
   }
 
   // Build drive stats
-  return groups.map((group, idx) => buildDriveStats(group, idx));
+  const drives = groups.map((group, idx) => buildDriveStats(group, idx));
+  return {
+    drives,
+    timeGroupCount: timeGroups.length,
+    routeCount: timed.length,
+    droppedCount: unique.length - timed.length,
+  };
 }
 
 function splitByGearState(group) {

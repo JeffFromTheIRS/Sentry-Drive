@@ -58,16 +58,23 @@ function initTabs() {
 
 // ─── Processing Tab ───────────────────────────────────────────────────────────
 function initProcessingTab() {
+  const clipsDirInput = document.getElementById('clips-dir');
+
+  // Restore last used folder
+  const savedClipsDir = localStorage.getItem('lastClipsDir');
+  if (savedClipsDir) clipsDirInput.value = savedClipsDir;
+
   document.getElementById('browse-clips').addEventListener('click', async () => {
     const dir = await window.electronAPI.selectDirectory();
-    if (dir) document.getElementById('clips-dir').value = dir;
+    if (dir) {
+      clipsDirInput.value = dir;
+      localStorage.setItem('lastClipsDir', dir);
+    }
   });
 
   document.getElementById('browse-output').addEventListener('click', async () => {
-    const file = await window.electronAPI.selectFile({
-      filters: [{ name: 'JSON', extensions: ['json'] }],
-    });
-    if (file) document.getElementById('output-path').value = file;
+    const dir = await window.electronAPI.selectDirectory();
+    if (dir) document.getElementById('output-path').value = dir;
   });
 
   document.getElementById('btn-start').addEventListener('click', startProcessing);
@@ -94,16 +101,25 @@ function initProcessingTab() {
 }
 
 async function loadDefaultPaths() {
-  const defaultPath = await window.electronAPI.getDefaultOutputPath();
-  document.getElementById('output-path').value = defaultPath;
+  const defaultDir = await window.electronAPI.getDefaultOutputDir();
+  document.getElementById('output-path').value = defaultDir;
 }
 
 async function startProcessing() {
-  const clipsDir = document.getElementById('clips-dir').value.trim();
-  const outputPath = document.getElementById('output-path').value.trim();
+  const clipsDir   = document.getElementById('clips-dir').value.trim();
+  const outputDir  = document.getElementById('output-path').value.trim();
 
-  if (!clipsDir) { alert('Please select a clips directory.'); return; }
-  if (!outputPath) { alert('Please specify an output file path.'); return; }
+  if (!clipsDir)  { alert('Please select a clips directory.'); return; }
+  if (!outputDir) { alert('Please select an output directory.'); return; }
+  localStorage.setItem('lastClipsDir', clipsDir);
+
+  // Check whether drive-data.json already exists in the output directory
+  const exists = await window.electronAPI.checkDriveData(outputDir);
+  if (exists) {
+    appendLogLine('Found existing drive-data.json — new clips will be added incrementally.', 'warn');
+  } else {
+    appendLogLine('No existing drive-data.json — starting fresh.', 'normal');
+  }
 
   const workerCount = parseInt(document.getElementById('worker-count').value, 10);
 
@@ -127,7 +143,7 @@ async function startProcessing() {
     }
   });
 
-  const result = await window.electronAPI.startProcessing({ clipsDir, outputPath, workerCount });
+  const result = await window.electronAPI.startProcessing({ clipsDir, outputDir, workerCount });
   if (!result.success && result.error) {
     appendLogLine(`Failed to start: ${result.error}`, 'error');
     onProcessingDone(-1);
@@ -173,8 +189,19 @@ function appendOutput({ type, text }) {
     appendLogLine(line, type === 'stderr' ? 'error' : 'normal');
   }
 
-  const match = text.match(/\((\d+)%\)/);
-  if (match) updateProgressBar(parseInt(match[1], 10));
+  // Phase 1 — directory scan: "SCAN N/M" → 0–15%
+  const scanMatch = text.match(/SCAN (\d+)\/(\d+)/);
+  if (scanMatch) {
+    const pct = Math.round((parseInt(scanMatch[1], 10) / parseInt(scanMatch[2], 10)) * 15);
+    updateProgressBar(pct);
+  }
+
+  // Phase 2 — GPS extraction: "(N%)" → 15–100%
+  const extractMatch = text.match(/\((\d+)%\)/);
+  if (extractMatch) {
+    const pct = 15 + Math.round(parseInt(extractMatch[1], 10) * 0.85);
+    updateProgressBar(pct);
+  }
 }
 
 function appendLogLine(text, cls = 'normal') {
@@ -240,6 +267,9 @@ async function loadDrives() {
 function renderDriveStats(drives, meta) {
   const totalMi = drives.reduce((s, d) => s + d.distanceMi, 0);
   const totalHrs = drives.reduce((s, d) => s + d.durationMs, 0) / 3_600_000;
+  const droppedNote = meta.droppedCount > 0
+    ? `<div class="stats-note">${meta.droppedCount} clip(s) had no parseable timestamp and were skipped.</div>`
+    : '';
 
   document.getElementById('drives-stats').innerHTML = `
     <div class="stats-grid">
@@ -256,10 +286,11 @@ function renderDriveStats(drives, meta) {
         <span class="stat-lbl">Hours</span>
       </div>
       <div class="stat">
-        <span class="stat-val">${meta.totalRoutes}</span>
+        <span class="stat-val">${meta.routeCount ?? meta.totalRoutes}</span>
         <span class="stat-lbl">Clips</span>
       </div>
     </div>
+    ${droppedNote}
   `;
 }
 

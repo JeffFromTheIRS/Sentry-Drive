@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -25,6 +25,8 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 }
+
+Menu.setApplicationMenu(null);
 
 app.whenReady().then(createWindow);
 
@@ -53,8 +55,10 @@ ipcMain.handle('select-file', async (_e, options) => {
   return canceled ? null : filePaths[0];
 });
 
-ipcMain.handle('get-default-output-path', () =>
-  path.join(__dirname, 'drive-data.json')
+ipcMain.handle('get-default-output-dir', () => __dirname);
+
+ipcMain.handle('check-drive-data', (_e, dir) =>
+  fs.existsSync(path.join(dir, 'drive-data.json'))
 );
 
 ipcMain.handle('get-cpu-count', () => require('os').cpus().length);
@@ -64,22 +68,26 @@ ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
     const raw = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(raw);
     const { groupIntoDrives } = await import('./grouper.js');
-    const drives = groupIntoDrives(data.routes ?? []);
+    const { drives, timeGroupCount, routeCount, droppedCount } = groupIntoDrives(data.routes ?? []);
     return {
       success: true,
       drives,
       totalRoutes: (data.routes ?? []).length,
       processedFileCount: (data.processedFiles ?? []).length,
+      timeGroupCount,
+      routeCount,
+      droppedCount,
     };
   } catch (err) {
     return { success: false, error: err.message };
   }
 });
 
-ipcMain.handle('start-processing', async (_e, { clipsDir, outputPath, workerCount }) => {
+ipcMain.handle('start-processing', async (_e, { clipsDir, outputDir, workerCount }) => {
   if (activeChild) return { success: false, error: 'Processing already running' };
 
   const scriptPath = path.join(__dirname, 'process.js');
+  const outputPath = path.join(outputDir, 'drive-data.json');
   const args = [scriptPath, clipsDir, outputPath];
   if (workerCount && workerCount > 0) args.push(String(workerCount));
 

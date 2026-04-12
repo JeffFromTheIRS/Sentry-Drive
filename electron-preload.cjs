@@ -5,7 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   selectFile: (opts) => ipcRenderer.invoke('select-file', opts),
-  getDefaultOutputPath: () => ipcRenderer.invoke('get-default-output-path'),
+  getDefaultOutputDir: () => ipcRenderer.invoke('get-default-output-dir'),
+  checkDriveData: (dir) => ipcRenderer.invoke('check-drive-data', dir),
   getCpuCount: () => ipcRenderer.invoke('get-cpu-count'),
   loadAndGroupDrives: (fp) => ipcRenderer.invoke('load-and-group-drives', fp),
   startProcessing: (args) => ipcRenderer.invoke('start-processing', args),

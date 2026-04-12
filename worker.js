@@ -9,7 +9,7 @@ let count = 0;
 
 for (const f of files) {
   count++;
-  if (count % 100 === 0) {
+  if (count % 10 === 0) {
     parentPort.postMessage({ type: "progress", workerId, count, total: files.length });
   }
 

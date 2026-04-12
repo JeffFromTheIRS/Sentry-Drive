@@ -18,23 +18,26 @@ const NUM_WORKERS = process.argv[4]
   ? Math.max(1, parseInt(process.argv[4], 10))
   : Math.max(1, os.cpus().length - 1);
 
+// Only process clips on or after this date (YYYY-MM-DD, inclusive).
+const CUTOFF_DATE = "2025-12-01";
+
 async function discoverFrontCameraFiles(clipsDir) {
-  const files = [];
-  let entries;
-  try {
-    entries = await readdir(clipsDir, { withFileTypes: true });
-  } catch (err) {
-    console.error(`Failed to read clips directory: ${err.message}`);
-    process.exit(1);
-  }
+  // First pass: walk through non-date folders to collect all date directories
+  // and any front-camera files sitting at non-date levels.
+  const dateEntries = []; // { dirPath, dateDir }
+  const rootFiles   = []; // files found outside date directories
 
-  const dateDirs = entries
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name)
-    .sort();
+  await collectDateEntries(clipsDir, dateEntries, rootFiles, 0);
+  dateEntries.sort((a, b) => a.dateDir.localeCompare(b.dateDir));
 
-  for (const dateDir of dateDirs) {
-    const dirPath = path.join(clipsDir, dateDir);
+  const files = [...rootFiles];
+
+  // Second pass: scan each date directory with progress display
+  const totalDirs = dateEntries.length;
+  for (let i = 0; i < dateEntries.length; i++) {
+    process.stdout.write(`\rSCAN ${i + 1}/${totalDirs}`);
+
+    const { dirPath, dateDir } = dateEntries[i];
     let mp4s;
     try {
       mp4s = await readdir(dirPath);
@@ -52,8 +55,50 @@ async function discoverFrontCameraFiles(clipsDir) {
       }
     }
   }
+  if (totalDirs > 0) process.stdout.write('\n');
 
   return files;
+}
+
+const DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}/;
+
+async function collectDateEntries(dir, dateEntries, rootFiles, depth) {
+  if (depth > 3) return;
+
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if (depth === 0) {
+      console.error(`Failed to read clips directory: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      if (DATE_PREFIX_RE.test(e.name)) {
+        // Date-named directory — add it for the second-pass scan
+        if (e.name.slice(0, 10) >= CUTOFF_DATE) {
+          dateEntries.push({ dirPath: path.join(dir, e.name), dateDir: e.name });
+        }
+      } else if (e.name === 'RecentClips') {
+        // Only recurse into RecentClips — ignore SavedClips, SentryClips, etc.
+        await collectDateEntries(path.join(dir, e.name), dateEntries, rootFiles, depth + 1);
+      }
+    } else if (e.name.endsWith("-front.mp4")) {
+      // Front-camera file sitting outside a date directory
+      const dateDir = e.name.slice(0, 10);
+      if (dateDir >= CUTOFF_DATE) {
+        rootFiles.push({
+          relativePath: e.name,
+          fullPath: path.join(dir, e.name),
+          dateDir,
+        });
+      }
+    }
+  }
 }
 
 function chunkArray(arr, n) {
@@ -89,6 +134,7 @@ async function main() {
   console.log(`Clips directory: ${CLIPS_DIR}`);
   console.log(`Output: ${OUTPUT_PATH}`);
   console.log(`Workers: ${NUM_WORKERS}`);
+  console.log(`Cutoff: ${CUTOFF_DATE} (front camera only)`);
   console.log();
 
   // Load existing data if available (for incremental processing)
@@ -121,8 +167,8 @@ async function main() {
   if (newFiles.length === 0) {
     console.log("\nNo new files to process.");
     if (existingData.routes && existingData.routes.length > 0) {
-      const drives = groupIntoDrives(existingData.routes);
-      console.log(`Existing drives: ${drives.length}`);
+      const { drives, timeGroupCount } = groupIntoDrives(existingData.routes);
+      console.log(`Existing drives: ${drives.length} (from ${timeGroupCount} time groups)`);
     }
     return;
   }
@@ -201,8 +247,9 @@ async function main() {
 
   // Group into drives
   console.log("\nGrouping into drives...");
-  const drives = groupIntoDrives(routes);
-  console.log(`  Drives found: ${drives.length}`);
+  const { drives, timeGroupCount, droppedCount } = groupIntoDrives(routes);
+  console.log(`  Drives found: ${drives.length} (from ${timeGroupCount} time groups, ${routes.length} routes)`);
+  if (droppedCount > 0) console.log(`  Routes without timestamps (dropped): ${droppedCount}`);
 
   // Compute aggregate stats
   let totalDistKm = 0, totalDistMi = 0, totalDurMs = 0;

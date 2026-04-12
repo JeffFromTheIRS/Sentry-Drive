@@ -8,7 +8,7 @@
   --accent:      #00c4b4;
   --accent-dim:  #008f84;
   --text:        #dde4f0;
-  --text-muted:  #6070a0;
+  --text-muted:  #dde4f0;
   --text-dim:    #303a58;
   --input-bg:    #090c15;
   --log-bg:      #050810;
@@ -320,7 +320,7 @@ html, body {
 
 #eta-label {
   font-size: 10px;
-  color: var(--text-dim);
+  color: var(--text);
   font-family: var(--font-mono);
   text-align: right;
 }
@@ -378,6 +378,12 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--text-muted);
+}
+
+.stats-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--warn);
 }
 
 #drives-list {
