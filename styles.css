@@ -89,8 +89,8 @@ html, body {
 }
 
 #app-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
   color: var(--text);
   letter-spacing: 0.02em;
 }
@@ -199,6 +199,13 @@ html, body {
 .btn-row .btn-primary,
 .btn-row .btn-danger { flex: 1; align-self: auto; }
 
+#btn-load-drives,
+#btn-repair-gps {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
 .btn-primary {
   background: var(--accent);
   color: #fff;
@@ -288,6 +295,13 @@ html, body {
   gap: 4px;
 }
 
+#progress-phase {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
 .progress-top {
   display: flex;
   align-items: center;
@@ -346,10 +360,6 @@ html, body {
 .log-warn   { color: var(--warn); }
 
 /* ── Drives Tab ─────────────────────────────────────────────────────────── */
-#drives-stats {
-  flex-shrink: 0;
-}
-
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -410,9 +420,9 @@ html, body {
 }
 
 .drive-item.selected {
-  background: var(--drive-sel);
+  background: rgba(0, 196, 180, 0.1);
   border-color: var(--accent);
-  border-left-width: 2px;
+  border-left: 3px solid var(--accent);
 }
 
 .drive-item-header {
@@ -469,8 +479,8 @@ html, body {
 .ap-row {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  font-size: 11px;
+  gap: 8px;
+  font-size: 13px;
   line-height: 1.4;
   flex-wrap: wrap;
 }
@@ -491,8 +501,8 @@ html, body {
 .ap-pct  { color: var(--text); font-weight: 600; min-width: 32px; }
 .ap-dist { color: var(--text-muted); }
 .ap-events {
-  color: var(--text-dim);
-  font-size: 10px;
+  color: var(--text);
+  font-size: 12px;
   width: 100%;
   padding-left: 48px;
 }
@@ -511,18 +521,14 @@ html, body {
 
 /* ── Drive Info Overlay ─────────────────────────────────────────────────── */
 #drive-info-panel {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 1000;
-  background: rgba(8, 8, 16, 0.93);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 14px 16px;
-  min-width: 210px;
-  max-width: 270px;
-  backdrop-filter: blur(10px);
-  pointer-events: none;
+  background: var(--drive-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .info-header {
@@ -532,14 +538,14 @@ html, body {
 }
 
 .info-date {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
   display: block;
 }
 
 .info-time {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-muted);
   font-family: var(--font-mono);
 }
@@ -558,14 +564,77 @@ html, body {
 }
 
 .info-val {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text);
   line-height: 1.1;
 }
 
 .info-unit {
-  font-size: 9px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+/* ── Back to Overview Button ────────────────────────────────────────────── */
+#btn-back-overview {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 1000;
+  background: rgba(8, 8, 16, 0.75);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: background 0.15s, border-color 0.15s;
+  outline: none;
+}
+#btn-back-overview:hover {
+  background: rgba(8, 8, 16, 0.9);
+  border-color: var(--accent);
+}
+
+/* ── Map Stats Overlay ──────────────────────────────────────────────────── */
+#map-stats {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: rgba(8, 8, 16, 0.75);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 18px 56px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: none;
+  display: flex;
+  gap: 48px;
+  align-items: center;
+}
+
+.map-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.map-stat-val {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.map-stat-lbl {
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--text-muted);
@@ -603,8 +672,8 @@ html, body {
   flex-shrink: 0;
 }
 
-.legend-swatch.fsd-on  { background: var(--fsd-blue); }
-.legend-swatch.fsd-off { background: var(--fsd-white); }
+.legend-swatch.fsd-on  { background: #22cc55; }
+.legend-swatch.fsd-off { background: #2266cc; }
 
 /* ── Scrollbars ─────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar              { width: 5px; height: 5px; }

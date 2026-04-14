@@ -21,7 +21,6 @@
     <div id="left-panel">
 
       <div id="app-header">
-        <div id="app-logo">SD</div>
         <div id="app-title">Sentry Drive</div>
       </div>
 
@@ -65,6 +64,7 @@
         </div>
 
         <div id="progress-section" class="hidden">
+          <div id="progress-phase">Scanning…</div>
           <div class="progress-top">
             <div id="progress-track"><div id="progress-bar"></div></div>
             <div id="progress-label">0%</div>
@@ -80,8 +80,10 @@
       <div id="tab-drives" class="tab-pane">
 
         <button id="btn-load-drives" class="btn-primary">Load Drives</button>
+        <button id="btn-repair-gps" class="btn-primary" style="background: var(--accent-dim);" disabled>Check Drives</button>
 
-        <div id="drives-stats"></div>
+        <div id="drive-info-panel" class="hidden"></div>
+
         <div id="drives-list"></div>
 
       </div>
@@ -91,9 +93,10 @@
     <!-- ── Map Panel ────────────────────────────────────────────────── -->
     <div id="map-container">
       <div id="map"></div>
-      <div id="drive-info-panel" class="hidden"></div>
+      <button id="btn-back-overview" class="hidden">&#8592; Overview</button>
+      <div id="map-stats" class="hidden"></div>
       <div id="map-legend" class="hidden">
-        <span class="legend-item"><span class="legend-swatch fsd-on"></span>Assisted</span>
+        <span class="legend-item"><span class="legend-swatch fsd-on"></span>Full Self-Driving</span>
         <span class="legend-item"><span class="legend-swatch fsd-off"></span>Manual</span>
       </div>
     </div>

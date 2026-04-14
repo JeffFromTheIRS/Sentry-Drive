@@ -40,9 +40,10 @@ app.on('activate', () => {
 
 // ─── IPC Handlers ─────────────────────────────────────────────────────────────
 
-ipcMain.handle('select-directory', async () => {
+ipcMain.handle('select-directory', async (_e, options) => {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
+    defaultPath: options?.defaultPath ?? undefined,
   });
   return canceled ? null : filePaths[0];
 });
@@ -51,8 +52,14 @@ ipcMain.handle('select-file', async (_e, options) => {
   const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: options?.filters ?? [{ name: 'JSON', extensions: ['json'] }],
+    defaultPath: options?.defaultPath ?? undefined,
   });
   return canceled ? null : filePaths[0];
+});
+
+ipcMain.handle('find-drive-data', async (_e, dir) => {
+  const filePath = path.join(dir, 'drive-data.json');
+  return fs.existsSync(filePath) ? filePath : null;
 });
 
 ipcMain.handle('get-default-output-dir', () => __dirname);
@@ -126,4 +133,163 @@ ipcMain.handle('stop-processing', () => {
   activeChild.kill('SIGTERM');
   activeChild = null;
   return { success: true };
+});
+
+ipcMain.handle('repair-gps', async (_e, filePath) => {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    fs.copyFileSync(filePath, filePath + '.bak');
+    const data = JSON.parse(raw);
+    const routes = data.routes ?? [];
+    let removedPoints = 0;
+    let removedRoutes = 0;
+    let bridgedGaps = 0;
+
+    const toRad = (d) => (d * Math.PI) / 180;
+    const haversineM = (lat1, lon1, lat2, lon2) => {
+      const R = 6371000;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+
+    const FILE_TS_RE = /(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/;
+    const parseTs = (file) => {
+      const m = FILE_TS_RE.exec(file);
+      if (!m) return null;
+      const t = new Date(`${m[1]}T${m[2]}:${m[3]}:${m[4]}`);
+      return isNaN(t.getTime()) ? null : t;
+    };
+
+    // --- Phase 1: Clean invalid coordinates ---
+    for (let r = routes.length - 1; r >= 0; r--) {
+      const pts = routes[r].points;
+      if (!pts || pts.length === 0) continue;
+
+      // Remove null/near-zero coordinates
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const lat = pts[i][0], lng = pts[i][1];
+        if ((Math.abs(lat) < 1 && Math.abs(lng) < 1) || lat == null || lng == null) {
+          pts.splice(i, 1);
+          removedPoints++;
+        }
+      }
+
+      // Remove points far from the median cluster (GPS pre-lock junk)
+      if (pts.length > 4) {
+        const q1 = Math.floor(pts.length * 0.25);
+        const q3 = Math.floor(pts.length * 0.75);
+        let mLat = 0, mLng = 0, cnt = 0;
+        for (let i = q1; i <= q3; i++) { mLat += pts[i][0]; mLng += pts[i][1]; cnt++; }
+        mLat /= cnt; mLng /= cnt;
+        for (let i = pts.length - 1; i >= 0; i--) {
+          if (haversineM(pts[i][0], pts[i][1], mLat, mLng) > 1000000) { // 1,000 km
+            pts.splice(i, 1);
+            removedPoints++;
+          }
+        }
+      }
+
+      if (pts.length === 0) {
+        routes.splice(r, 1);
+        removedRoutes++;
+      }
+    }
+
+    // --- Phase 2: Bridge gaps between consecutive non-parked clips ---
+    // Sort routes by timestamp
+    const GEAR_PARK = 0;
+    const MAX_BRIDGE_MS = 5 * 60 * 1000; // 5 minutes
+    const timedRoutes = routes
+      .map((r, idx) => ({ idx, ts: parseTs(r.file), route: r }))
+      .filter((r) => r.ts !== null)
+      .sort((a, b) => a.ts - b.ts);
+
+    const bridgeRoutes = [];
+    for (let i = 0; i < timedRoutes.length - 1; i++) {
+      const cur = timedRoutes[i];
+      const next = timedRoutes[i + 1];
+      const curR = cur.route;
+      const nextR = next.route;
+
+      // Check time gap: clip duration is ~60s, so expected next = cur.ts + 60s
+      const curEnd = new Date(cur.ts.getTime() + 60000);
+      const gapMs = next.ts - curEnd;
+      if (gapMs <= 0 || gapMs > MAX_BRIDGE_MS) continue;
+
+      // Both clips must have points
+      if (!curR.points || curR.points.length === 0) continue;
+      if (!nextR.points || nextR.points.length === 0) continue;
+
+      // Check gear: last gear of current clip must not be park
+      const curLastGear = curR.gearRuns && curR.gearRuns.length > 0
+        ? curR.gearRuns[curR.gearRuns.length - 1].gear
+        : (curR.gearStates && curR.gearStates.length > 0 ? curR.gearStates[curR.gearStates.length - 1] : null);
+      const nextFirstGear = nextR.gearRuns && nextR.gearRuns.length > 0
+        ? nextR.gearRuns[0].gear
+        : (nextR.gearStates && nextR.gearStates.length > 0 ? nextR.gearStates[0] : null);
+
+      if (curLastGear === GEAR_PARK || nextFirstGear === GEAR_PARK) continue;
+
+      // Same date
+      if (curR.date !== nextR.date) continue;
+
+      // Interpolate between last point of cur and first point of next
+      const lastPt = curR.points[curR.points.length - 1];
+      const firstPt = nextR.points[0];
+      const nSteps = Math.max(2, Math.round(gapMs / 1000)); // ~1 point per second
+      const interpPoints = [];
+      const interpGears = [];
+      const interpAP = [];
+      const interpSpeeds = [];
+      const interpAccel = [];
+
+      for (let s = 1; s < nSteps; s++) {
+        const t = s / nSteps;
+        interpPoints.push([
+          lastPt[0] + (firstPt[0] - lastPt[0]) * t,
+          lastPt[1] + (firstPt[1] - lastPt[1]) * t,
+        ]);
+        interpGears.push(curLastGear ?? 1);
+        interpAP.push(0);
+        // Estimate speed from distance/time
+        const distM = haversineM(lastPt[0], lastPt[1], firstPt[0], firstPt[1]);
+        interpSpeeds.push(distM / (gapMs / 1000));
+        interpAccel.push(0);
+      }
+
+      // Build a synthetic bridge route
+      const bridgeTs = new Date(curEnd.getTime());
+      const pad = (n) => String(n).padStart(2, '0');
+      const synthFile = `${curR.date}/${curR.date}_${pad(bridgeTs.getHours())}-${pad(bridgeTs.getMinutes())}-${pad(bridgeTs.getSeconds())}-front-bridge.mp4`;
+
+      bridgeRoutes.push({
+        file: synthFile,
+        date: curR.date,
+        points: interpPoints,
+        gearStates: interpGears,
+        autopilotStates: interpAP,
+        speeds: interpSpeeds,
+        accelPositions: interpAccel,
+        rawParkCount: 0,
+        rawFrameCount: interpPoints.length,
+        gearRuns: [{ gear: curLastGear ?? 1, frames: interpPoints.length }],
+      });
+      bridgedGaps++;
+    }
+
+    // Add bridge routes and mark them as processed
+    for (const br of bridgeRoutes) {
+      routes.push(br);
+      if (!data.processedFiles) data.processedFiles = [];
+      data.processedFiles.push(br.file);
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+    return { success: true, removedPoints, removedRoutes, bridgedGaps };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });

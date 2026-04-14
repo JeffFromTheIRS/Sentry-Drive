@@ -265,6 +265,17 @@ function buildDriveStats(clips, idx) {
     }
   }
 
+  // Remove invalid GPS coordinates (e.g. near 0,0 "Null Island")
+  for (let i = allPoints.length - 1; i >= 0; i--) {
+    const { lat, lng } = allPoints[i];
+    if ((Math.abs(lat) < 1 && Math.abs(lng) < 1) || lat == null || lng == null) {
+      allPoints.splice(i, 1);
+    }
+  }
+
+  // Filter GPS outliers — points impossibly far from both neighbors
+  filterGPSOutliers(allPoints);
+
   // Compute distance and speeds
   let totalDistanceM = 0;
   let maxSpeedMps = 0;
@@ -473,6 +484,57 @@ function buildDriveStats(clips, idx) {
     // Assisted aggregate (any state > 0 — for map/UI use)
     assistedPercent: pct(assistedDistanceM),
   };
+}
+
+/**
+ * Remove GPS outlier points that are impossibly far from both neighbors,
+ * and strip leading/trailing bogus GPS readings (pre-lock junk).
+ * Mutates the array in place.
+ */
+function filterGPSOutliers(points) {
+  if (points.length <= 2) return;
+
+  // Step 1: Find the median location to identify where the drive actually is.
+  // Use the middle 50% of points to avoid being skewed by leading/trailing junk.
+  const q1 = Math.floor(points.length * 0.25);
+  const q3 = Math.floor(points.length * 0.75);
+  let medLat = 0, medLng = 0, count = 0;
+  for (let i = q1; i <= q3; i++) {
+    medLat += points[i].lat;
+    medLng += points[i].lng;
+    count++;
+  }
+  medLat /= count;
+  medLng /= count;
+
+  // Step 2: Remove any point that is >50 km from the median cluster.
+  const MAX_FROM_MEDIAN_M = 1000000; // 1,000 km
+  for (let i = points.length - 1; i >= 0; i--) {
+    if (haversineM(points[i].lat, points[i].lng, medLat, medLng) > MAX_FROM_MEDIAN_M) {
+      points.splice(i, 1);
+    }
+  }
+
+  // Step 3: Remove isolated outliers far from both neighbors.
+  const MAX_JUMP_M = 5000; // 5 km — impossible between consecutive ~1s samples
+
+  for (let i = points.length - 1; i >= 0; i--) {
+    const prev = i > 0 ? points[i - 1] : null;
+    const next = i < points.length - 1 ? points[i + 1] : null;
+
+    const farFromPrev = prev
+      ? haversineM(prev.lat, prev.lng, points[i].lat, points[i].lng) > MAX_JUMP_M
+      : false;
+    const farFromNext = next
+      ? haversineM(points[i].lat, points[i].lng, next.lat, next.lng) > MAX_JUMP_M
+      : false;
+
+    if ((prev && next && farFromPrev && farFromNext) ||
+        (!prev && farFromNext) ||
+        (!next && farFromPrev)) {
+      points.splice(i, 1);
+    }
+  }
 }
 
 function formatISO(d) {

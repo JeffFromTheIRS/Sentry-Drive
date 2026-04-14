@@ -5,6 +5,7 @@ let map = null;
 let overviewLayers = [];       // faint lines for all drives
 let selectedLayers = [];       // highlighted route for selected drive
 let drives = [];
+let loadedFilePath = null;
 let selectedDriveId = null;
 let removeOutputListener = null;
 let processingStartTime = null;
@@ -40,6 +41,27 @@ function initMap() {
   ).addTo(map);
 
   window.addEventListener('resize', () => map.invalidateSize());
+
+  map.on('zoomend', updateLineWeights);
+  map.on('click', () => { if (selectedDriveId !== null) deselectDrive(); });
+
+  document.getElementById('btn-back-overview').addEventListener('click', (e) => {
+    e.stopPropagation();
+    deselectDrive();
+  });
+}
+
+function getWeight(base) {
+  const zoom = map.getZoom();
+  return Math.max(1, base * (zoom / 10));
+}
+
+function updateLineWeights() {
+  for (const layer of [...overviewLayers, ...selectedLayers]) {
+    if (layer._baseWeight && layer.setStyle) {
+      layer.setStyle({ weight: getWeight(layer._baseWeight) });
+    }
+  }
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
@@ -60,12 +82,17 @@ function initTabs() {
 function initProcessingTab() {
   const clipsDirInput = document.getElementById('clips-dir');
 
-  // Restore last used folder
+  // Restore last used folders
   const savedClipsDir = localStorage.getItem('lastClipsDir');
   if (savedClipsDir) clipsDirInput.value = savedClipsDir;
 
+  const savedOutputDir = localStorage.getItem('lastOutputDir');
+  if (savedOutputDir) document.getElementById('output-path').value = savedOutputDir;
+
   document.getElementById('browse-clips').addEventListener('click', async () => {
-    const dir = await window.electronAPI.selectDirectory();
+    const dir = await window.electronAPI.selectDirectory({
+      defaultPath: clipsDirInput.value || undefined,
+    });
     if (dir) {
       clipsDirInput.value = dir;
       localStorage.setItem('lastClipsDir', dir);
@@ -73,8 +100,14 @@ function initProcessingTab() {
   });
 
   document.getElementById('browse-output').addEventListener('click', async () => {
-    const dir = await window.electronAPI.selectDirectory();
-    if (dir) document.getElementById('output-path').value = dir;
+    const outputInput = document.getElementById('output-path');
+    const dir = await window.electronAPI.selectDirectory({
+      defaultPath: outputInput.value || undefined,
+    });
+    if (dir) {
+      outputInput.value = dir;
+      localStorage.setItem('lastOutputDir', dir);
+    }
   });
 
   document.getElementById('btn-start').addEventListener('click', startProcessing);
@@ -101,8 +134,48 @@ function initProcessingTab() {
 }
 
 async function loadDefaultPaths() {
-  const defaultDir = await window.electronAPI.getDefaultOutputDir();
-  document.getElementById('output-path').value = defaultDir;
+  const outputInput = document.getElementById('output-path');
+  if (!outputInput.value) {
+    const defaultDir = await window.electronAPI.getDefaultOutputDir();
+    outputInput.value = defaultDir;
+  }
+
+  // Auto-load drive-data if we have a saved path or can find one in the output dir
+  const savedDriveData = localStorage.getItem('lastDriveDataPath');
+  if (savedDriveData) {
+    await autoLoadDriveData(savedDriveData);
+  } else {
+    const clipsDir = document.getElementById('clips-dir').value;
+    if (clipsDir) {
+      const found = await window.electronAPI.findDriveData(clipsDir);
+      if (found) await autoLoadDriveData(found);
+    }
+  }
+}
+
+async function autoLoadDriveData(filePath) {
+  try {
+    const result = await window.electronAPI.loadAndGroupDrives(filePath);
+    if (!result.success) return;
+
+    loadedFilePath = filePath;
+    localStorage.setItem('lastDriveDataPath', filePath);
+    drives = result.drives;
+    renderDriveStats(drives, result);
+    renderDriveList(drives);
+    renderOverviewOnMap(drives);
+    document.getElementById('btn-repair-gps').disabled = false;
+
+    // Switch to drives tab
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('active'));
+    document.querySelector('[data-tab="drives"]').classList.add('active');
+    document.getElementById('tab-drives').classList.add('active');
+    setTimeout(() => map.invalidateSize(), 50);
+  } catch {
+    // File may no longer exist — clear saved path
+    localStorage.removeItem('lastDriveDataPath');
+  }
 }
 
 async function startProcessing() {
@@ -112,6 +185,7 @@ async function startProcessing() {
   if (!clipsDir)  { alert('Please select a clips directory.'); return; }
   if (!outputDir) { alert('Please select an output directory.'); return; }
   localStorage.setItem('lastClipsDir', clipsDir);
+  localStorage.setItem('lastOutputDir', outputDir);
 
   // Check whether drive-data.json already exists in the output directory
   const exists = await window.electronAPI.checkDriveData(outputDir);
@@ -186,21 +260,23 @@ function appendOutput({ type, text }) {
     .filter((l) => l.trim() !== '');
 
   for (const line of lines) {
+    if (/^SCAN \d+\/\d+$/.test(line.trim())) continue;
     appendLogLine(line, type === 'stderr' ? 'error' : 'normal');
   }
 
-  // Phase 1 — directory scan: "SCAN N/M" → 0–15%
+  // Phase 1 — directory scan: "SCAN N/M" → 0–100%
   const scanMatch = text.match(/SCAN (\d+)\/(\d+)/);
   if (scanMatch) {
-    const pct = Math.round((parseInt(scanMatch[1], 10) / parseInt(scanMatch[2], 10)) * 15);
+    const pct = Math.round((parseInt(scanMatch[1], 10) / parseInt(scanMatch[2], 10)) * 100);
+    document.getElementById('progress-phase').textContent = 'Scanning…';
     updateProgressBar(pct);
   }
 
-  // Phase 2 — GPS extraction: "(N%)" → 15–100%
+  // Phase 2 — GPS extraction: "(N%)" → 0–100% (resets bar)
   const extractMatch = text.match(/\((\d+)%\)/);
   if (extractMatch) {
-    const pct = 15 + Math.round(parseInt(extractMatch[1], 10) * 0.85);
-    updateProgressBar(pct);
+    document.getElementById('progress-phase').textContent = 'Processing…';
+    updateProgressBar(parseInt(extractMatch[1], 10));
   }
 }
 
@@ -225,20 +301,58 @@ function updateProgressBar(pct) {
 }
 
 function fmtDuration(sec) {
-  if (sec < 60) return `${Math.round(sec)}s`;
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = Math.round(sec % 60);
+  if (h > 0) return `${h}h ${m}m ${s}s`;
   return `${m}m ${s}s`;
 }
 
 // ─── View Drives Tab ──────────────────────────────────────────────────────────
 function initViewDrivesTab() {
   document.getElementById('btn-load-drives').addEventListener('click', loadDrives);
+  document.getElementById('btn-repair-gps').addEventListener('click', repairGPS);
+}
+
+async function repairGPS() {
+  if (!loadedFilePath) return;
+
+  const btn = document.getElementById('btn-repair-gps');
+  btn.textContent = 'Checking…';
+  btn.disabled = true;
+
+  try {
+    const result = await window.electronAPI.repairGPS(loadedFilePath);
+    if (!result.success) {
+      alert(`Failed to repair GPS data:\n${result.error}`);
+      return;
+    }
+
+    const msgs = [];
+    if (result.removedPoints > 0) msgs.push(`Removed ${result.removedPoints} invalid point(s)`);
+    if (result.removedRoutes > 0) msgs.push(`Removed ${result.removedRoutes} empty route(s)`);
+    if (result.bridgedGaps > 0) msgs.push(`Bridged ${result.bridgedGaps} gap(s) with interpolated paths`);
+    alert(msgs.length > 0 ? `Repair complete:\n${msgs.join('\n')}` : 'No issues found.');
+
+    // Reload the repaired file
+    const reloaded = await window.electronAPI.loadAndGroupDrives(loadedFilePath);
+    if (reloaded.success) {
+      drives = reloaded.drives;
+      renderDriveStats(drives, reloaded);
+      renderDriveList(drives);
+      renderOverviewOnMap(drives);
+    }
+  } finally {
+    btn.textContent = 'Check Drives';
+    btn.disabled = false;
+  }
 }
 
 async function loadDrives() {
+  const lastPath = localStorage.getItem('lastDriveDataPath');
   const filePath = await window.electronAPI.selectFile({
     filters: [{ name: 'JSON', extensions: ['json'] }],
+    defaultPath: lastPath || undefined,
   });
   if (!filePath) return;
 
@@ -254,10 +368,13 @@ async function loadDrives() {
       return;
     }
 
+    loadedFilePath = filePath;
+    localStorage.setItem('lastDriveDataPath', filePath);
     drives = result.drives;
     renderDriveStats(drives, result);
     renderDriveList(drives);
     renderOverviewOnMap(drives);
+    document.getElementById('btn-repair-gps').disabled = false;
   } finally {
     btn.textContent = 'Load Drives';
     btn.disabled = false;
@@ -266,32 +383,30 @@ async function loadDrives() {
 
 function renderDriveStats(drives, meta) {
   const totalMi = drives.reduce((s, d) => s + d.distanceMi, 0);
-  const totalHrs = drives.reduce((s, d) => s + d.durationMs, 0) / 3_600_000;
-  const droppedNote = meta.droppedCount > 0
-    ? `<div class="stats-note">${meta.droppedCount} clip(s) had no parseable timestamp and were skipped.</div>`
-    : '';
+  const totalMs = drives.reduce((s, d) => s + d.durationMs, 0);
+  const totalHrs = Math.floor(totalMs / 3_600_000);
+  const totalMin = Math.floor((totalMs % 3_600_000) / 60_000);
+  const durStr = totalHrs > 0 ? `${totalHrs}h ${totalMin}m` : `${totalMin}m`;
+  const clips = meta.routeCount ?? meta.totalRoutes;
 
-  document.getElementById('drives-stats').innerHTML = `
-    <div class="stats-grid">
-      <div class="stat">
-        <span class="stat-val">${drives.length}</span>
-        <span class="stat-lbl">Drives</span>
-      </div>
-      <div class="stat">
-        <span class="stat-val">${totalMi.toFixed(0)}</span>
-        <span class="stat-lbl">Miles</span>
-      </div>
-      <div class="stat">
-        <span class="stat-val">${totalHrs.toFixed(1)}</span>
-        <span class="stat-lbl">Hours</span>
-      </div>
-      <div class="stat">
-        <span class="stat-val">${meta.routeCount ?? meta.totalRoutes}</span>
-        <span class="stat-lbl">Clips</span>
-      </div>
-    </div>
-    ${droppedNote}
+  const totalDistM = drives.reduce((s, d) => s + (d.distanceKm ?? d.distanceMi * 1.60934) * 1000, 0);
+  const fsdDistM = drives.reduce((s, d) => s + (d.fsdDistanceKm ?? d.fsdDistanceMi * 1.60934) * 1000, 0);
+  const apDistM = drives.reduce((s, d) => s + (d.autosteerDistanceKm ?? (d.autosteerDistanceMi ?? 0) * 1.60934) * 1000, 0);
+  const fsdPct = totalDistM > 0 ? Math.round((fsdDistM / totalDistM) * 100) : 0;
+  const apPct = totalDistM > 0 ? Math.round((apDistM / totalDistM) * 100) : 0;
+
+  let html = `
+    <div class="map-stat"><span class="map-stat-val">${drives.length}</span><span class="map-stat-lbl">Drives</span></div>
+    <div class="map-stat"><span class="map-stat-val">${clips}</span><span class="map-stat-lbl">Clips</span></div>
+    <div class="map-stat"><span class="map-stat-val">${totalMi.toFixed(0)}</span><span class="map-stat-lbl">Miles</span></div>
+    <div class="map-stat"><span class="map-stat-val">${durStr}</span><span class="map-stat-lbl">Driven</span></div>
   `;
+  if (fsdPct > 0) html += `<div class="map-stat"><span class="map-stat-val">${fsdPct}%</span><span class="map-stat-lbl">FSD</span></div>`;
+  if (apPct > 0) html += `<div class="map-stat"><span class="map-stat-val">${apPct}%</span><span class="map-stat-lbl">Autopilot</span></div>`;
+
+  const panel = document.getElementById('map-stats');
+  panel.innerHTML = html;
+  panel.classList.remove('hidden');
 }
 
 function renderDriveList(drives) {
@@ -355,11 +470,52 @@ function buildDriveItem(drive) {
 }
 
 function selectDrive(drive) {
+  // Toggle: clicking the same drive deselects it
+  if (selectedDriveId === drive.id) {
+    deselectDrive();
+    return;
+  }
+
   document.querySelectorAll('.drive-item').forEach((el) => el.classList.remove('selected'));
-  document.querySelector(`[data-drive-id="${drive.id}"]`)?.classList.add('selected');
+  const selectedEl = document.querySelector(`[data-drive-id="${drive.id}"]`);
+  if (selectedEl) {
+    selectedEl.classList.add('selected');
+    selectedEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   selectedDriveId = drive.id;
+
+  // Grey out overview lines
+  for (const layer of overviewLayers) {
+    if (layer.setStyle) layer.setStyle({ color: '#8888a0', opacity: 1 });
+  }
+
+  document.getElementById('btn-back-overview').classList.remove('hidden');
   drawSelectedDrive(drive);
   showDriveInfo(drive);
+}
+
+function deselectDrive() {
+  selectedDriveId = null;
+  document.querySelectorAll('.drive-item').forEach((el) => el.classList.remove('selected'));
+  clearLayers(selectedLayers);
+  hideDriveInfo();
+  document.getElementById('map-legend').classList.add('hidden');
+  document.getElementById('btn-back-overview').classList.add('hidden');
+
+  // Restore overview line colors
+  for (const layer of overviewLayers) {
+    if (layer.setStyle) layer.setStyle({ color: '#2266cc', opacity: 0.7 });
+  }
+
+  // Fit map to all drives
+  const allLatLngs = [];
+  for (const drive of drives) {
+    if (!drive.points || drive.points.length < 2) continue;
+    for (const p of drive.points) allLatLngs.push([p[0], p[1]]);
+  }
+  if (allLatLngs.length > 0) {
+    map.fitBounds(L.latLngBounds(allLatLngs), { padding: [30, 30] });
+  }
 }
 
 // ─── Map Drawing ──────────────────────────────────────────────────────────────
@@ -371,6 +527,7 @@ function clearLayers(arr) {
 function renderOverviewOnMap(drives) {
   clearLayers(overviewLayers);
   clearLayers(selectedLayers);
+  selectedDriveId = null;
   hideDriveInfo();
   document.getElementById('map-legend').classList.add('hidden');
 
@@ -382,12 +539,13 @@ function renderOverviewOnMap(drives) {
     allLatLngs.push(...lls);
 
     const line = L.polyline(lls, {
-      color: '#1a3050',
-      weight: 1.5,
+      color: '#2266cc',
+      weight: getWeight(2.5),
       opacity: 0.7,
     }).addTo(map);
+    line._baseWeight = 2.5;
 
-    line.on('click', () => selectDrive(drive));
+    line.on('click', (e) => { L.DomEvent.stopPropagation(e); selectDrive(drive); });
     overviewLayers.push(line);
   }
 
@@ -415,22 +573,25 @@ function drawSelectedDrive(drive) {
       while (j < pts.length && (fsd[j] !== 0) === engaged) j++;
 
       const seg = latLngs.slice(i, Math.min(j + 1, pts.length));
+      const baseW = 5;
       if (seg.length >= 2) {
         const line = L.polyline(seg, {
-          color: engaged ? '#00ccff' : 'rgba(180,210,240,0.75)',
-          weight: engaged ? 4 : 2.5,
+          color: engaged ? '#22cc55' : '#2266cc',
+          weight: getWeight(baseW),
           opacity: 0.95,
         }).addTo(map);
+        line._baseWeight = baseW;
         selectedLayers.push(line);
       }
       i = j;
     }
   } else {
     const line = L.polyline(latLngs, {
-      color: '#00ccff',
-      weight: 3,
+      color: '#2266cc',
+      weight: getWeight(4),
       opacity: 0.9,
     }).addTo(map);
+    line._baseWeight = 4;
     selectedLayers.push(line);
   }
 
@@ -485,7 +646,7 @@ function drawSelectedDrive(drive) {
   }
 }
 
-// ─── Drive Info Overlay ───────────────────────────────────────────────────────
+// ─── Drive Info Panel ─────────────────────────────────────────────────────────
 function showDriveInfo(drive) {
   const panel = document.getElementById('drive-info-panel');
 
@@ -496,66 +657,35 @@ function showDriveInfo(drive) {
   const startT = drive.startTime.slice(11, 16);
   const endT   = drive.endTime.slice(11, 16);
 
-  // Build per-mode AP rows
-  const apRows = [];
-
-  if ((drive.fsdPercent ?? 0) > 0) {
-    const evts = [];
-    if (drive.fsdDisengagements > 0) evts.push(`${drive.fsdDisengagements} disengage`);
-    if (drive.fsdAccelPushes    > 0) evts.push(`${drive.fsdAccelPushes} accel`);
-    apRows.push(`
-      <div class="ap-row">
-        <span class="ap-mode ap-fsd">FSD</span>
-        <span class="ap-pct">${drive.fsdPercent}%</span>
-        <span class="ap-dist">${drive.fsdDistanceMi.toFixed(1)} mi</span>
-        ${evts.length ? `<span class="ap-events">${evts.join(' · ')}</span>` : ''}
-      </div>`);
-  }
-
-  if ((drive.autosteerPercent ?? 0) > 0) {
-    apRows.push(`
-      <div class="ap-row">
-        <span class="ap-mode ap-autosteer">AP</span>
-        <span class="ap-pct">${drive.autosteerPercent}%</span>
-        <span class="ap-dist">${drive.autosteerDistanceMi.toFixed(1)} mi</span>
-      </div>`);
-  }
-
-  if ((drive.taccPercent ?? 0) > 0) {
-    apRows.push(`
-      <div class="ap-row">
-        <span class="ap-mode ap-tacc">TACC</span>
-        <span class="ap-pct">${drive.taccPercent}%</span>
-        <span class="ap-dist">${drive.taccDistanceMi.toFixed(1)} mi</span>
-      </div>`);
-  }
-
-  panel.innerHTML = `
+  let html = `
     <div class="info-header">
       <span class="info-date">${date}</span>
       <span class="info-time">${startT} – ${endT}</span>
     </div>
     <div class="info-grid">
-      <div class="info-stat">
-        <span class="info-val">${drive.distanceMi.toFixed(1)}</span>
-        <span class="info-unit">miles</span>
-      </div>
-      <div class="info-stat">
-        <span class="info-val">${durStr}</span>
-        <span class="info-unit">duration</span>
-      </div>
-      <div class="info-stat">
-        <span class="info-val">${drive.avgSpeedMph.toFixed(0)}</span>
-        <span class="info-unit">avg mph</span>
-      </div>
-      <div class="info-stat">
-        <span class="info-val">${drive.maxSpeedMph.toFixed(0)}</span>
-        <span class="info-unit">max mph</span>
-      </div>
+      <div class="info-stat"><span class="info-val">${drive.distanceMi.toFixed(1)}</span><span class="info-unit">Miles</span></div>
+      <div class="info-stat"><span class="info-val">${durStr}</span><span class="info-unit">Duration</span></div>
+      <div class="info-stat"><span class="info-val">${drive.avgSpeedMph.toFixed(0)}</span><span class="info-unit">Avg MPH</span></div>
+      <div class="info-stat"><span class="info-val">${drive.maxSpeedMph.toFixed(0)}</span><span class="info-unit">Max MPH</span></div>
     </div>
-    ${apRows.length ? `<div class="info-ap">${apRows.join('')}</div>` : ''}
   `;
 
+  const apRows = [];
+  if ((drive.fsdPercent ?? 0) > 0) {
+    const evts = [];
+    if (drive.fsdDisengagements > 0) evts.push(`${drive.fsdDisengagements} disengage`);
+    if (drive.fsdAccelPushes > 0) evts.push(`${drive.fsdAccelPushes} accel`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-fsd">FSD</span><span class="ap-pct">${drive.fsdPercent}%</span><span class="ap-dist">${drive.fsdDistanceMi.toFixed(1)} mi</span>${evts.length ? `<span class="ap-events">${evts.join(' · ')}</span>` : ''}</div>`);
+  }
+  if ((drive.autosteerPercent ?? 0) > 0) {
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-autosteer">AP</span><span class="ap-pct">${drive.autosteerPercent}%</span><span class="ap-dist">${drive.autosteerDistanceMi.toFixed(1)} mi</span></div>`);
+  }
+  if ((drive.taccPercent ?? 0) > 0) {
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-tacc">TACC</span><span class="ap-pct">${drive.taccPercent}%</span><span class="ap-dist">${drive.taccDistanceMi.toFixed(1)} mi</span></div>`);
+  }
+  if (apRows.length) html += `<div class="info-ap">${apRows.join('')}</div>`;
+
+  panel.innerHTML = html;
   panel.classList.remove('hidden');
 }
 
