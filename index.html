@@ -6,11 +6,14 @@
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
     script-src 'self' https://unpkg.com;
-    style-src 'self' 'unsafe-inline' https://unpkg.com;
+    style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com;
+    font-src https://fonts.gstatic.com;
     img-src 'self' data: blob: https://unpkg.com https://*.basemaps.cartocdn.com https://*.openstreetmap.org;
     connect-src https://*.basemaps.cartocdn.com https://unpkg.com;
   " />
   <title>Sentry Drive</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700;800&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -93,7 +96,7 @@
     <!-- ── Map Panel ────────────────────────────────────────────────── -->
     <div id="map-container">
       <div id="map"></div>
-      <button id="btn-back-overview" class="hidden">&#8592; Overview</button>
+      <button id="btn-back-overview" class="hidden"><span class="material-icons">arrow_back</span></button>
       <div id="map-stats" class="hidden"></div>
       <div id="map-legend" class="hidden">
         <span class="legend-item"><span class="legend-swatch fsd-on"></span>Full Self-Driving</span>

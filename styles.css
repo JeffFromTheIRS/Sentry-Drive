@@ -35,7 +35,7 @@ html, body {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
 }
@@ -586,10 +586,14 @@ html, body {
   background: rgba(8, 8, 16, 0.75);
   border: 1px solid var(--border-light);
   border-radius: var(--radius);
-  padding: 8px 14px;
+  padding: 10px;
   color: var(--text);
-  font-size: 12px;
+  font-size: 24px;
   font-weight: 600;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -638,6 +642,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* ── Map Legend ─────────────────────────────────────────────────────────── */

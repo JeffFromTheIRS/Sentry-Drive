@@ -1,5 +1,7 @@
 'use strict';
 
+const fmt = (n) => Number(n).toLocaleString('en-US');
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let map = null;
 let overviewLayers = [];       // faint lines for all drives
@@ -304,8 +306,8 @@ function fmtDuration(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.round(sec % 60);
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  return `${m}m ${s}s`;
+  if (h > 0) return `${h}H ${m}M ${s}S`;
+  return `${m}M ${s}S`;
 }
 
 // ─── View Drives Tab ──────────────────────────────────────────────────────────
@@ -386,7 +388,7 @@ function renderDriveStats(drives, meta) {
   const totalMs = drives.reduce((s, d) => s + d.durationMs, 0);
   const totalHrs = Math.floor(totalMs / 3_600_000);
   const totalMin = Math.floor((totalMs % 3_600_000) / 60_000);
-  const durStr = totalHrs > 0 ? `${totalHrs}h ${totalMin}m` : `${totalMin}m`;
+  const durStr = totalHrs > 0 ? `${totalHrs}H ${totalMin}M` : `${totalMin}M`;
   const clips = meta.routeCount ?? meta.totalRoutes;
 
   const totalDistM = drives.reduce((s, d) => s + (d.distanceKm ?? d.distanceMi * 1.60934) * 1000, 0);
@@ -396,12 +398,12 @@ function renderDriveStats(drives, meta) {
   const apPct = totalDistM > 0 ? Math.round((apDistM / totalDistM) * 100) : 0;
 
   let html = `
-    <div class="map-stat"><span class="map-stat-val">${drives.length}</span><span class="map-stat-lbl">Drives</span></div>
-    <div class="map-stat"><span class="map-stat-val">${clips}</span><span class="map-stat-lbl">Clips</span></div>
-    <div class="map-stat"><span class="map-stat-val">${totalMi.toFixed(0)}</span><span class="map-stat-lbl">Miles</span></div>
+    <div class="map-stat"><span class="map-stat-val">${fmt(drives.length)}</span><span class="map-stat-lbl">Drives</span></div>
+    <div class="map-stat"><span class="map-stat-val">${fmt(clips)}</span><span class="map-stat-lbl">Clips</span></div>
+    <div class="map-stat"><span class="map-stat-val">${fmt(totalMi.toFixed(0))}</span><span class="map-stat-lbl">Miles</span></div>
     <div class="map-stat"><span class="map-stat-val">${durStr}</span><span class="map-stat-lbl">Driven</span></div>
   `;
-  if (fsdPct > 0) html += `<div class="map-stat"><span class="map-stat-val">${fsdPct}%</span><span class="map-stat-lbl">FSD</span></div>`;
+  if (fsdPct > 0) html += `<div class="map-stat"><span class="map-stat-val">${fsdPct}%</span><span class="map-stat-lbl">Full Self-Driving</span></div>`;
   if (apPct > 0) html += `<div class="map-stat"><span class="map-stat-val">${apPct}%</span><span class="map-stat-lbl">Autopilot</span></div>`;
 
   const panel = document.getElementById('map-stats');
@@ -449,7 +451,7 @@ function buildDriveItem(drive) {
   const timeStr = drive.startTime.slice(11, 16);
   const durH = Math.floor(drive.durationMs / 3_600_000);
   const durM = Math.floor((drive.durationMs % 3_600_000) / 60_000);
-  const durStr = durH > 0 ? `${durH}h ${durM}m` : `${durM}m`;
+  const durStr = durH > 0 ? `${durH}H ${durM}M` : `${durM}M`;
   const badge = assistedBadge(drive);
 
   item.innerHTML = `
@@ -458,7 +460,7 @@ function buildDriveItem(drive) {
       <span class="drive-time">${timeStr}</span>
     </div>
     <div class="drive-item-stats">
-      <span class="drive-stat">${drive.distanceMi.toFixed(1)} mi</span>
+      <span class="drive-stat">${fmt(drive.distanceMi.toFixed(1))} mi</span>
       <span class="drive-sep">·</span>
       <span class="drive-stat">${durStr}</span>
       ${badge ? `<span class="drive-sep">·</span><span class="drive-fsd">${badge}</span>` : ''}
@@ -652,7 +654,7 @@ function showDriveInfo(drive) {
 
   const durH = Math.floor(drive.durationMs / 3_600_000);
   const durM = Math.floor((drive.durationMs % 3_600_000) / 60_000);
-  const durStr = durH > 0 ? `${durH}h ${durM}m` : `${durM}m`;
+  const durStr = durH > 0 ? `${durH}H ${durM}M` : `${durM}M`;
   const date   = drive.startTime.slice(0, 10);
   const startT = drive.startTime.slice(11, 16);
   const endT   = drive.endTime.slice(11, 16);
@@ -663,7 +665,7 @@ function showDriveInfo(drive) {
       <span class="info-time">${startT} – ${endT}</span>
     </div>
     <div class="info-grid">
-      <div class="info-stat"><span class="info-val">${drive.distanceMi.toFixed(1)}</span><span class="info-unit">Miles</span></div>
+      <div class="info-stat"><span class="info-val">${fmt(drive.distanceMi.toFixed(1))}</span><span class="info-unit">Miles</span></div>
       <div class="info-stat"><span class="info-val">${durStr}</span><span class="info-unit">Duration</span></div>
       <div class="info-stat"><span class="info-val">${drive.avgSpeedMph.toFixed(0)}</span><span class="info-unit">Avg MPH</span></div>
       <div class="info-stat"><span class="info-val">${drive.maxSpeedMph.toFixed(0)}</span><span class="info-unit">Max MPH</span></div>
@@ -675,13 +677,13 @@ function showDriveInfo(drive) {
     const evts = [];
     if (drive.fsdDisengagements > 0) evts.push(`${drive.fsdDisengagements} disengage`);
     if (drive.fsdAccelPushes > 0) evts.push(`${drive.fsdAccelPushes} accel`);
-    apRows.push(`<div class="ap-row"><span class="ap-mode ap-fsd">FSD</span><span class="ap-pct">${drive.fsdPercent}%</span><span class="ap-dist">${drive.fsdDistanceMi.toFixed(1)} mi</span>${evts.length ? `<span class="ap-events">${evts.join(' · ')}</span>` : ''}</div>`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-fsd">FSD</span><span class="ap-pct">${drive.fsdPercent}%</span><span class="ap-dist">${fmt(drive.fsdDistanceMi.toFixed(1))} mi</span>${evts.length ? `<span class="ap-events">${evts.join(' · ')}</span>` : ''}</div>`);
   }
   if ((drive.autosteerPercent ?? 0) > 0) {
-    apRows.push(`<div class="ap-row"><span class="ap-mode ap-autosteer">AP</span><span class="ap-pct">${drive.autosteerPercent}%</span><span class="ap-dist">${drive.autosteerDistanceMi.toFixed(1)} mi</span></div>`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-autosteer">AP</span><span class="ap-pct">${drive.autosteerPercent}%</span><span class="ap-dist">${fmt(drive.autosteerDistanceMi.toFixed(1))} mi</span></div>`);
   }
   if ((drive.taccPercent ?? 0) > 0) {
-    apRows.push(`<div class="ap-row"><span class="ap-mode ap-tacc">TACC</span><span class="ap-pct">${drive.taccPercent}%</span><span class="ap-dist">${drive.taccDistanceMi.toFixed(1)} mi</span></div>`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-tacc">TACC</span><span class="ap-pct">${drive.taccPercent}%</span><span class="ap-dist">${fmt(drive.taccDistanceMi.toFixed(1))} mi</span></div>`);
   }
   if (apRows.length) html += `<div class="info-ap">${apRows.join('')}</div>`;
 
