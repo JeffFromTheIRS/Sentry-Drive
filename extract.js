@@ -90,8 +90,8 @@ function extractFromMdat(buf, offset, size) {
         ]);
         gears.push(result.gear);
         apStates.push(result.apState);
-        speeds.push(result.speed);
-        accelPositions.push(result.accelPos);
+        speeds.push(Math.round(result.speed * 10) / 10);
+        accelPositions.push(Math.round(result.accelPos * 100) / 100);
       }
     }
 

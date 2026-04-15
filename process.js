@@ -286,7 +286,7 @@ async function main() {
     driveTags: existingData.driveTags || {},
   };
 
-  await writeFile(OUTPUT_PATH, JSON.stringify(storeData, null, 2) + "\n");
+  await writeFile(OUTPUT_PATH, JSON.stringify(storeData));
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\nDone in ${elapsed}s`);
