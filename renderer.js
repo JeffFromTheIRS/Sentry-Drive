@@ -261,6 +261,15 @@ function onUpdateStatus({ status, version, percent, message }) {
   }
 }
 
+// ─── Loading Overlay ─────────────────────────────────────────────────────────
+function showLoading(msg = 'Loading drive data...') {
+  document.getElementById('loading-overlay').querySelector('.loading-text').textContent = msg;
+  document.getElementById('loading-overlay').classList.remove('hidden');
+}
+function hideLoading() {
+  document.getElementById('loading-overlay').classList.add('hidden');
+}
+
 // ─── Processing Tab ───────────────────────────────────────────────────────────
 function initProcessingTab() {
   const clipsDirInput = document.getElementById('clips-dir');
@@ -337,9 +346,10 @@ async function loadDefaultPaths() {
 }
 
 async function autoLoadDriveData(filePath) {
+  showLoading();
   try {
     const result = await window.electronAPI.loadAndGroupDrives(filePath);
-    if (!result.success) return;
+    if (!result.success) { hideLoading(); return; }
 
     loadedFilePath = filePath;
     localStorage.setItem('lastDriveDataPath', filePath);
@@ -361,6 +371,7 @@ async function autoLoadDriveData(filePath) {
     // File may no longer exist — clear saved path
     localStorage.removeItem('lastDriveDataPath');
   }
+  hideLoading();
 }
 
 async function startProcessing() {
@@ -523,6 +534,7 @@ async function repairGPS() {
     alert(msgs.length > 0 ? `Repair complete:\n${msgs.join('\n')}` : 'No issues found.');
 
     // Reload the repaired file
+    showLoading();
     const reloaded = await window.electronAPI.loadAndGroupDrives(loadedFilePath);
     if (reloaded.success) {
       drives = reloaded.drives;
@@ -532,6 +544,7 @@ async function repairGPS() {
       renderDriveList(drives);
       renderOverviewOnMap(drives);
     }
+    hideLoading();
   } finally {
     btn.textContent = 'Check Drives';
     btn.disabled = false;
@@ -549,6 +562,7 @@ async function loadDrives() {
   const btn = document.getElementById('btn-load-drives');
   btn.textContent = 'Loading…';
   btn.disabled = true;
+  showLoading();
 
   try {
     const result = await window.electronAPI.loadAndGroupDrives(filePath);
@@ -570,6 +584,7 @@ async function loadDrives() {
   } finally {
     btn.textContent = 'Load Drives';
     btn.disabled = false;
+    hideLoading();
   }
 }
 

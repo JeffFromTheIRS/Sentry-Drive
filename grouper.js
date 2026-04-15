@@ -3,7 +3,7 @@
 
 import { GEAR_PARK, AUTOPILOT_OFF, AUTOPILOT_FSD, AUTOPILOT_AUTOSTEER, AUTOPILOT_TACC } from "./extract.js";
 
-const DRIVE_GAP_MS = 2 * 60 * 1000; // 2 minutes
+const DRIVE_GAP_MS = 5 * 60 * 1000; // 5 minutes (matches Sentry USB)
 const PARK_GAP_SECONDS = 2.0;
 
 const FILE_TIMESTAMP_RE = /(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/;
@@ -264,17 +264,6 @@ function buildDriveStats(clips, idx) {
       });
     }
   }
-
-  // Remove invalid GPS coordinates (e.g. near 0,0 "Null Island")
-  for (let i = allPoints.length - 1; i >= 0; i--) {
-    const { lat, lng } = allPoints[i];
-    if ((Math.abs(lat) < 1 && Math.abs(lng) < 1) || lat == null || lng == null) {
-      allPoints.splice(i, 1);
-    }
-  }
-
-  // Filter GPS outliers — points impossibly far from both neighbors
-  filterGPSOutliers(allPoints);
 
   // Compute distance and speeds
   let totalDistanceM = 0;

@@ -110,16 +110,16 @@ function chunkArray(arr, n) {
   return chunks.filter((c) => c.length > 0);
 }
 
-function runWorker(files, workerId, onProgress) {
+function runWorker(files, workerId, onResult) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(path.join(__dirname, "worker.js"), {
       workerData: { files, workerId },
     });
     worker.on("message", (msg) => {
-      if (msg.type === "progress") {
-        onProgress(msg.workerId, msg.count, msg.total);
+      if (msg.type === "result") {
+        onResult(msg);
       } else if (msg.type === "done") {
-        resolve(msg.results);
+        resolve();
       }
     });
     worker.on("error", reject);
@@ -178,29 +178,14 @@ async function main() {
   const chunks = chunkArray(newFiles, NUM_WORKERS);
   console.log(`\nProcessing ${newFiles.length} files across ${chunks.length} workers...\n`);
 
-  // Track per-worker progress
-  const workerProgress = new Array(chunks.length).fill(0);
-  const workerTotals = chunks.map((c) => c.length);
-
-  const onProgress = (workerId, count) => {
-    workerProgress[workerId] = count;
-    const totalDone = workerProgress.reduce((a, b) => a + b, 0);
-    const pct = Math.round((totalDone / newFiles.length) * 100);
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-    const rate = totalDone > 0 ? (totalDone / ((Date.now() - startTime) / 1000)).toFixed(0) : 0;
-    process.stdout.write(`\r  Progress: ${totalDone}/${newFiles.length} (${pct}%) | ${rate} files/sec | ${elapsed}s elapsed`);
-  };
-
-  // Run workers in parallel
-  const workerPromises = chunks.map((chunk, idx) => runWorker(chunk, idx, onProgress));
-  const workerResults = await Promise.all(workerPromises);
-
-  // Collect results
-  const allResults = workerResults.flat();
-
+  // Shared state for incremental result collection
   let filesWithGPS = 0;
   let totalPoints = 0;
   let errors = 0;
+  let totalDone = 0;
+  let sinceLastCheckpoint = 0;
+
+  const CHECKPOINT_INTERVAL = 100;
 
   const processedFiles = [...(existingData.processedFiles || [])];
   const routeMap = new Map();
@@ -211,15 +196,18 @@ async function main() {
     }
   }
 
-  for (const result of allResults) {
+  const driveTags = existingData.driveTags || {};
+
+  // Called by each worker for every file result
+  const onResult = ({ result, count, total }) => {
+    totalDone++;
+    sinceLastCheckpoint++;
+
     processedFiles.push(result.relativePath);
 
     if (result.error) {
       errors++;
-      continue;
-    }
-
-    if (result.hasGPS) {
+    } else if (result.hasGPS) {
       filesWithGPS++;
       totalPoints += result.points.length;
       const norm = result.relativePath.replace(/\\/g, "/");
@@ -236,12 +224,31 @@ async function main() {
         gearRuns: result.gearRuns,
       });
     }
-  }
+
+    // Progress display
+    const pct = Math.round((totalDone / newFiles.length) * 100);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+    const rate = totalDone > 0 ? (totalDone / ((Date.now() - startTime) / 1000)).toFixed(0) : 0;
+    process.stdout.write(`\r  Progress: ${totalDone}/${newFiles.length} (${pct}%) | ${rate} files/sec | ${elapsed}s elapsed`);
+
+    // Checkpoint periodically
+    if (sinceLastCheckpoint >= CHECKPOINT_INTERVAL) {
+      sinceLastCheckpoint = 0;
+      const routes = Array.from(routeMap.values());
+      streamWriteJSON(OUTPUT_PATH, processedFiles, routes, driveTags)
+        .then(() => console.log(`\n  Checkpoint saved (${totalDone} files)`))
+        .catch(() => {});
+    }
+  };
+
+  // Run workers in parallel
+  const workerPromises = chunks.map((chunk, idx) => runWorker(chunk, idx, onResult));
+  await Promise.all(workerPromises);
 
   const routes = Array.from(routeMap.values());
 
   console.log(`\n\nExtraction complete:`);
-  console.log(`  Files processed: ${allResults.length}`);
+  console.log(`  Files processed: ${totalDone}`);
   console.log(`  Files with GPS:  ${filesWithGPS}`);
   console.log(`  Total points:    ${totalPoints}`);
   console.log(`  Errors:          ${errors}`);
@@ -282,7 +289,6 @@ async function main() {
   // Save drive-data.json (same format as Sentry USB)
   // Stream JSON to disk to avoid exceeding Node's max string length on large datasets
   console.log(`\nSaving to ${OUTPUT_PATH}...`);
-  const driveTags = existingData.driveTags || {};
   await streamWriteJSON(OUTPUT_PATH, processedFiles, routes, driveTags);
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

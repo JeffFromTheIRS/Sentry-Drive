@@ -4,15 +4,12 @@ import { extractGPSFromFile } from "./extract.js";
 
 const { files, workerId } = workerData;
 
-const results = [];
 let count = 0;
 
 for (const f of files) {
   count++;
-  if (count % 10 === 0) {
-    parentPort.postMessage({ type: "progress", workerId, count, total: files.length });
-  }
 
+  let result;
   try {
     const data = await extractGPSFromFile(f.fullPath);
     if (data && data.points.length > 0) {
@@ -28,7 +25,7 @@ for (const f of files) {
       );
 
       if (deduped.points.length > 0) {
-        results.push({
+        result = {
           relativePath: f.relativePath,
           dateDir: f.dateDir,
           points: deduped.points,
@@ -40,19 +37,21 @@ for (const f of files) {
           rawFrameCount,
           gearRuns,
           hasGPS: true,
-        });
+        };
       } else {
-        results.push({ relativePath: f.relativePath, hasGPS: false });
+        result = { relativePath: f.relativePath, hasGPS: false };
       }
     } else {
-      results.push({ relativePath: f.relativePath, hasGPS: false });
+      result = { relativePath: f.relativePath, hasGPS: false };
     }
   } catch (err) {
-    results.push({ relativePath: f.relativePath, hasGPS: false, error: err.message });
+    result = { relativePath: f.relativePath, hasGPS: false, error: err.message };
   }
+
+  parentPort.postMessage({ type: "result", workerId, result, count, total: files.length });
 }
 
-parentPort.postMessage({ type: "done", results });
+parentPort.postMessage({ type: "done", workerId });
 
 function computeGearRuns(gears) {
   if (gears.length === 0) return [];
