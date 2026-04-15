@@ -12,6 +12,8 @@ let selectedDriveId = null;
 let removeOutputListener = null;
 let processingStartTime = null;
 let cpuCount = 1;
+let allTags = [];          // deduplicated, sorted list of all tag names
+let activeTagFilter = '';  // currently active tag filter (empty = show all)
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -19,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initProcessingTab();
   initViewDrivesTab();
+  initFooter();
   loadDefaultPaths();
 });
 
@@ -78,6 +81,184 @@ function initTabs() {
       setTimeout(() => map.invalidateSize(), 50);
     });
   });
+}
+
+// ─── Footer & Settings ───────────────────────────────────────────────────────
+let updateState = 'idle'; // idle | checking | available | downloading | ready | error
+let updateSkipped = false; // true after user dismisses the update modal this session
+let pendingVersion = '';   // version string from the 'available' event
+
+function initFooter() {
+  // GitHub link opens in external browser
+  document.getElementById('link-github').addEventListener('click', (e) => {
+    e.preventDefault();
+    window.electronAPI.openExternal('https://github.com/JeffFromTheIRS/Sentry-Drive');
+  });
+
+  // Settings modal
+  document.getElementById('btn-settings').addEventListener('click', () => {
+    document.getElementById('settings-overlay').classList.remove('hidden');
+  });
+  document.getElementById('btn-close-settings').addEventListener('click', () => {
+    document.getElementById('settings-overlay').classList.add('hidden');
+  });
+  document.getElementById('settings-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+      document.getElementById('settings-overlay').classList.add('hidden');
+    }
+  });
+
+  // Version display
+  window.electronAPI.getAppVersion().then((v) => {
+    document.getElementById('settings-version-number').textContent = `v${v}`;
+    document.querySelector('.footer-version').textContent = `v${v}`;
+  });
+
+  // Listen for update events from main process
+  window.electronAPI.onUpdateStatus(onUpdateStatus);
+
+  // Settings "Check for Update" button
+  document.getElementById('btn-check-update').addEventListener('click', () => {
+    if (updateState === 'available') {
+      window.electronAPI.downloadUpdate();
+    } else if (updateState === 'ready') {
+      window.electronAPI.installUpdate();
+    } else if (updateState === 'idle' || updateState === 'error') {
+      window.electronAPI.checkForUpdate();
+    }
+  });
+
+  // Update modal buttons
+  document.getElementById('btn-update-now').addEventListener('click', () => {
+    document.getElementById('update-overlay').classList.add('hidden');
+    window.electronAPI.downloadUpdate();
+  });
+  document.getElementById('btn-update-skip').addEventListener('click', () => {
+    updateSkipped = true;
+    document.getElementById('update-overlay').classList.add('hidden');
+  });
+
+  // Footer download button
+  document.getElementById('btn-footer-update').addEventListener('click', () => {
+    if (updateState === 'available') {
+      window.electronAPI.downloadUpdate();
+    } else if (updateState === 'ready') {
+      window.electronAPI.installUpdate();
+    }
+  });
+
+  // Beta checkbox
+  const betaCheckbox = document.getElementById('chk-beta');
+  const betaWarning = document.getElementById('beta-warning');
+  const savedBeta = localStorage.getItem('enrollBeta') === 'true';
+  betaCheckbox.checked = savedBeta;
+  if (savedBeta) betaWarning.classList.remove('hidden');
+  window.electronAPI.setAllowPrerelease(savedBeta);
+
+  betaCheckbox.addEventListener('change', () => {
+    const enrolled = betaCheckbox.checked;
+    localStorage.setItem('enrollBeta', String(enrolled));
+    window.electronAPI.setAllowPrerelease(enrolled);
+
+    if (enrolled) {
+      betaWarning.classList.remove('hidden');
+    } else {
+      betaWarning.classList.add('hidden');
+    }
+
+    // Re-check for updates with new prerelease setting
+    window.electronAPI.checkForUpdate();
+  });
+
+  // Auto-check on launch
+  window.electronAPI.checkForUpdate();
+}
+
+function onUpdateStatus({ status, version, percent, message }) {
+  const btn = document.getElementById('btn-check-update');
+  const msg = document.getElementById('settings-update-msg');
+  const footerBtn = document.getElementById('btn-footer-update');
+
+  updateState = status;
+
+  switch (status) {
+    case 'checking':
+      btn.textContent = 'Checking…';
+      btn.disabled = true;
+      btn.className = 'btn-primary btn-update-full';
+      msg.textContent = '';
+      msg.className = 'settings-update-msg hidden';
+      break;
+
+    case 'available':
+      pendingVersion = version;
+
+      // Settings panel
+      btn.textContent = 'Update';
+      btn.disabled = false;
+      btn.className = 'btn-primary btn-update-full';
+      msg.textContent = `New update available (v${version})`;
+      msg.className = 'settings-update-msg update-available';
+
+      // Show update modal if user hasn't skipped this session
+      if (!updateSkipped) {
+        document.getElementById('update-modal-msg').textContent =
+          `Version ${version} is ready to install.`;
+        document.getElementById('update-overlay').classList.remove('hidden');
+      }
+
+      // Show footer download button
+      footerBtn.classList.remove('hidden');
+      footerBtn.disabled = false;
+      footerBtn.title = `Download v${version}`;
+      footerBtn.querySelector('.material-icons').textContent = 'download';
+      break;
+
+    case 'up-to-date':
+      updateState = 'idle';
+      btn.textContent = 'Check for Update';
+      btn.disabled = false;
+      btn.className = 'btn-primary btn-update-full';
+      msg.textContent = 'You are up to date.';
+      msg.className = 'settings-update-msg update-current';
+
+      footerBtn.classList.add('hidden');
+      break;
+
+    case 'downloading':
+      btn.textContent = `Downloading… ${percent}%`;
+      btn.disabled = true;
+      btn.className = 'btn-primary btn-update-full';
+      msg.textContent = `Downloading update…`;
+      msg.className = 'settings-update-msg update-available';
+
+      footerBtn.disabled = true;
+      footerBtn.title = `Downloading… ${percent}%`;
+      break;
+
+    case 'ready':
+      btn.textContent = 'Restart to Update';
+      btn.disabled = false;
+      btn.className = 'btn-primary btn-update-full';
+      msg.textContent = 'Update downloaded. Restart to apply.';
+      msg.className = 'settings-update-msg update-available';
+
+      footerBtn.disabled = false;
+      footerBtn.title = 'Restart to Update';
+      footerBtn.querySelector('.material-icons').textContent = 'restart_alt';
+      break;
+
+    case 'error':
+      updateState = 'error';
+      btn.textContent = 'Retry';
+      btn.disabled = false;
+      btn.className = 'btn-primary btn-update-full';
+      msg.textContent = 'Update check failed.';
+      msg.className = 'settings-update-msg update-error';
+
+      footerBtn.classList.add('hidden');
+      break;
+  }
 }
 
 // ─── Processing Tab ───────────────────────────────────────────────────────────
@@ -163,6 +344,8 @@ async function autoLoadDriveData(filePath) {
     loadedFilePath = filePath;
     localStorage.setItem('lastDriveDataPath', filePath);
     drives = result.drives;
+    refreshAllTags(result.driveTags ?? {});
+    renderTagFilter();
     renderDriveStats(drives, result);
     renderDriveList(drives);
     renderOverviewOnMap(drives);
@@ -238,11 +421,14 @@ function onProcessingDone(code) {
   document.getElementById('eta-label').textContent = '';
 
   if (code === 0) {
+    document.getElementById('progress-phase').textContent = 'Complete!';
     appendLogLine('✓ Processing complete!', 'success');
     updateProgressBar(100);
   } else if (code === -2) {
+    document.getElementById('progress-phase').textContent = 'Stopped';
     appendLogLine('● Processing stopped by user.', 'warn');
   } else if (code !== null && code !== undefined) {
+    document.getElementById('progress-phase').textContent = 'Error';
     appendLogLine(`✗ Process exited with code ${code}.`, 'error');
   }
 }
@@ -340,6 +526,8 @@ async function repairGPS() {
     const reloaded = await window.electronAPI.loadAndGroupDrives(loadedFilePath);
     if (reloaded.success) {
       drives = reloaded.drives;
+      refreshAllTags(reloaded.driveTags ?? {});
+      renderTagFilter();
       renderDriveStats(drives, reloaded);
       renderDriveList(drives);
       renderOverviewOnMap(drives);
@@ -373,6 +561,8 @@ async function loadDrives() {
     loadedFilePath = filePath;
     localStorage.setItem('lastDriveDataPath', filePath);
     drives = result.drives;
+    refreshAllTags(result.driveTags ?? {});
+    renderTagFilter();
     renderDriveStats(drives, result);
     renderDriveList(drives);
     renderOverviewOnMap(drives);
@@ -420,8 +610,16 @@ function renderDriveList(drives) {
     return;
   }
 
-  // Reverse-chronological
-  const sorted = [...drives].sort((a, b) => b.startTime.localeCompare(a.startTime));
+  // Reverse-chronological, filtered by active tag
+  let sorted = [...drives].sort((a, b) => b.startTime.localeCompare(a.startTime));
+  if (activeTagFilter) {
+    sorted = sorted.filter((d) => (d.tags ?? []).includes(activeTagFilter));
+  }
+
+  if (sorted.length === 0) {
+    list.innerHTML = '<div class="empty-state">No drives match the selected filter.</div>';
+    return;
+  }
 
   for (const drive of sorted) {
     list.appendChild(buildDriveItem(drive));
@@ -454,6 +652,10 @@ function buildDriveItem(drive) {
   const durStr = durH > 0 ? `${durH}H ${durM}M` : `${durM}M`;
   const badge = assistedBadge(drive);
 
+  const tagPills = (drive.tags ?? []).map((t) =>
+    `<span class="tag-pill">${t}</span>`
+  ).join('');
+
   item.innerHTML = `
     <div class="drive-item-header">
       <span class="drive-date">${date}</span>
@@ -465,6 +667,7 @@ function buildDriveItem(drive) {
       <span class="drive-stat">${durStr}</span>
       ${badge ? `<span class="drive-sep">·</span><span class="drive-fsd">${badge}</span>` : ''}
     </div>
+    ${tagPills ? `<div class="drive-item-tags">${tagPills}</div>` : ''}
   `;
 
   item.addEventListener('click', () => selectDrive(drive));
@@ -687,10 +890,157 @@ function showDriveInfo(drive) {
   }
   if (apRows.length) html += `<div class="info-ap">${apRows.join('')}</div>`;
 
+  // Tags section
+  const driveTags = drive.tags ?? [];
+  html += `<div class="info-tags">`;
+  html += `<div class="info-tags-label">Tags</div>`;
+  html += `<div class="info-tags-list" id="info-tags-list">`;
+  for (const t of driveTags) {
+    html += `<span class="tag-pill tag-removable" data-tag="${t}">${t}<button class="tag-remove" data-tag="${t}">&times;</button></span>`;
+  }
+  html += `<button class="tag-add-btn" id="btn-add-tag">+</button>`;
+  html += `</div>`;
+  html += `<div class="tag-input-row hidden" id="tag-input-row">`;
+  html += `<input type="text" class="tag-input" id="tag-input" placeholder="New tag…" />`;
+  html += `<div class="tag-suggestions hidden" id="tag-suggestions"></div>`;
+  html += `</div>`;
+  html += `</div>`;
+
   panel.innerHTML = html;
   panel.classList.remove('hidden');
+
+  // Wire up tag interactions
+  panel.querySelectorAll('.tag-remove').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeTag(drive, btn.dataset.tag);
+    });
+  });
+
+  document.getElementById('btn-add-tag').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const row = document.getElementById('tag-input-row');
+    row.classList.toggle('hidden');
+    if (!row.classList.contains('hidden')) {
+      document.getElementById('tag-input').focus();
+    }
+  });
+
+  const tagInput = document.getElementById('tag-input');
+  tagInput.addEventListener('input', () => showTagSuggestions(drive, tagInput.value));
+  tagInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = tagInput.value.trim();
+      if (val) addTag(drive, val);
+    } else if (e.key === 'Escape') {
+      document.getElementById('tag-input-row').classList.add('hidden');
+    }
+  });
 }
 
 function hideDriveInfo() {
   document.getElementById('drive-info-panel').classList.add('hidden');
+}
+
+// ─── Drive Tags ──────────────────────────────────────────────────────────────
+
+function refreshAllTags(driveTags) {
+  const set = new Set();
+  for (const tags of Object.values(driveTags)) {
+    for (const t of tags) set.add(t);
+  }
+  allTags = [...set].sort();
+}
+
+function renderTagFilter() {
+  const container = document.getElementById('tag-filter');
+  if (allTags.length === 0) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+  let html = `<button class="tag-filter-btn${activeTagFilter === '' ? ' active' : ''}" data-tag="">All</button>`;
+  for (const t of allTags) {
+    html += `<button class="tag-filter-btn${activeTagFilter === t ? ' active' : ''}" data-tag="${t}">${t}</button>`;
+  }
+  container.innerHTML = html;
+
+  container.querySelectorAll('.tag-filter-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tag = btn.dataset.tag;
+      activeTagFilter = (activeTagFilter === tag && tag !== '') ? '' : tag;
+      renderTagFilter();
+      renderDriveList(drives);
+    });
+  });
+}
+
+async function addTag(drive, tagName) {
+  if (!loadedFilePath) return;
+  const tags = [...(drive.tags ?? [])];
+  if (tags.includes(tagName)) return;
+  tags.push(tagName);
+
+  drive.tags = tags;
+  await window.electronAPI.setDriveTags({ filePath: loadedFilePath, driveKey: drive.startTime, tags });
+
+  // Update global tag list
+  if (!allTags.includes(tagName)) {
+    allTags.push(tagName);
+    allTags.sort();
+    renderTagFilter();
+  }
+
+  // Refresh UI
+  showDriveInfo(drive);
+  renderDriveList(drives);
+}
+
+async function removeTag(drive, tagName) {
+  if (!loadedFilePath) return;
+  const tags = (drive.tags ?? []).filter((t) => t !== tagName);
+
+  drive.tags = tags;
+  await window.electronAPI.setDriveTags({ filePath: loadedFilePath, driveKey: drive.startTime, tags });
+
+  // Rebuild global tag list (tag may no longer be used by any drive)
+  const set = new Set();
+  for (const d of drives) {
+    for (const t of (d.tags ?? [])) set.add(t);
+  }
+  allTags = [...set].sort();
+
+  // If the removed tag was the active filter and no longer exists, clear filter
+  if (activeTagFilter === tagName && !allTags.includes(tagName)) {
+    activeTagFilter = '';
+  }
+
+  renderTagFilter();
+  showDriveInfo(drive);
+  renderDriveList(drives);
+}
+
+function showTagSuggestions(drive, query) {
+  const container = document.getElementById('tag-suggestions');
+  const existing = drive.tags ?? [];
+  const filtered = allTags.filter((t) => !existing.includes(t) && t.toLowerCase().includes(query.toLowerCase()));
+
+  if (filtered.length === 0 || !query) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+  container.innerHTML = filtered.map((t) => `<div class="tag-suggestion" data-tag="${t}">${t}</div>`).join('');
+
+  container.querySelectorAll('.tag-suggestion').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      addTag(drive, el.dataset.tag);
+    });
+  });
 }

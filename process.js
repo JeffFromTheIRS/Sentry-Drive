@@ -5,6 +5,7 @@
 
 import { Worker } from "node:worker_threads";
 import { readdir, writeFile, readFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { groupIntoDrives } from "./grouper.js";
@@ -279,14 +280,10 @@ async function main() {
   console.log(`  Accel pushes:       ${totalAccelPushes}`);
 
   // Save drive-data.json (same format as Sentry USB)
+  // Stream JSON to disk to avoid exceeding Node's max string length on large datasets
   console.log(`\nSaving to ${OUTPUT_PATH}...`);
-  const storeData = {
-    processedFiles,
-    routes,
-    driveTags: existingData.driveTags || {},
-  };
-
-  await writeFile(OUTPUT_PATH, JSON.stringify(storeData));
+  const driveTags = existingData.driveTags || {};
+  await streamWriteJSON(OUTPUT_PATH, processedFiles, routes, driveTags);
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\nDone in ${elapsed}s`);
@@ -297,11 +294,35 @@ async function main() {
     "drive-data.json"
   );
   try {
-    await writeFile(sentryDataPath, JSON.stringify(storeData, null, 2) + "\n");
+    await streamWriteJSON(sentryDataPath, processedFiles, routes, driveTags);
     console.log(`Also saved to ${sentryDataPath}`);
   } catch {
     // Not critical
   }
+}
+
+function streamWriteJSON(filePath, processedFiles, routes, driveTags) {
+  return new Promise((resolve, reject) => {
+    const ws = createWriteStream(filePath);
+    ws.on('error', reject);
+
+    ws.write('{"processedFiles":');
+    ws.write(JSON.stringify(processedFiles));
+
+    ws.write(',"routes":[');
+    for (let i = 0; i < routes.length; i++) {
+      if (i > 0) ws.write(',');
+      // Each individual route is small enough to stringify
+      ws.write(JSON.stringify(routes[i]));
+    }
+    ws.write(']');
+
+    ws.write(',"driveTags":');
+    ws.write(JSON.stringify(driveTags));
+
+    ws.write('}');
+    ws.end(() => resolve());
+  });
 }
 
 main().catch((err) => {

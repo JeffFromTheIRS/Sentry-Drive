@@ -6,9 +6,47 @@
   "main": "electron-main.cjs",
   "scripts": {
     "start": "electron .",
-    "process": "node process.js"
+    "process": "node process.js",
+    "build": "electron-builder --win",
+    "publish": "electron-builder --win --publish always"
+  },
+  "build": {
+    "appId": "com.jefffromtheirs.sentry-drive",
+    "productName": "Sentry Drive",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron-main.cjs",
+      "electron-preload.cjs",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "process.js",
+      "grouper.js",
+      "extract.js",
+      "worker.js",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "JeffFromTheIRS",
+      "repo": "Sentry-Drive"
+    }
   },
   "devDependencies": {
-    "electron": "^29.4.6"
+    "electron": "^29.4.6",
+    "electron-builder": "^26.8.1"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }

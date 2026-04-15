@@ -1,12 +1,28 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 
 let mainWindow;
 let activeChild = null;
+
+// ─── Auto-Updater Setup ─────────────────────────────────────────────────────
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+function sendUpdateStatus(status, data = {}) {
+  mainWindow?.webContents.send('update-status', { status, ...data });
+}
+
+autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
+autoUpdater.on('update-available', (info) => sendUpdateStatus('available', { version: info.version }));
+autoUpdater.on('update-not-available', () => sendUpdateStatus('up-to-date'));
+autoUpdater.on('download-progress', (progress) => sendUpdateStatus('downloading', { percent: Math.round(progress.percent) }));
+autoUpdater.on('update-downloaded', () => sendUpdateStatus('ready'));
+autoUpdater.on('error', (err) => sendUpdateStatus('error', { message: err.message }));
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -70,15 +86,36 @@ ipcMain.handle('check-drive-data', (_e, dir) =>
 
 ipcMain.handle('get-cpu-count', () => require('os').cpus().length);
 
+ipcMain.handle('open-external', (_e, url) => shell.openExternal(url));
+
+ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('set-allow-prerelease', (_e, allow) => {
+  autoUpdater.allowPrerelease = allow;
+});
+
+ipcMain.handle('check-for-update', () => autoUpdater.checkForUpdates().catch(() => {}));
+
+ipcMain.handle('download-update', () => autoUpdater.downloadUpdate().catch(() => {}));
+
+ipcMain.handle('install-update', () => autoUpdater.quitAndInstall(false, true));
+
 ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(raw);
     const { groupIntoDrives } = await import('./grouper.js');
     const { drives, timeGroupCount, routeCount, droppedCount } = groupIntoDrives(data.routes ?? []);
+    // Attach tags to drives
+    const driveTags = data.driveTags ?? {};
+    for (const d of drives) {
+      d.tags = driveTags[d.startTime] ?? [];
+    }
+
     return {
       success: true,
       drives,
+      driveTags,
       totalRoutes: (data.routes ?? []).length,
       processedFileCount: (data.processedFiles ?? []).length,
       timeGroupCount,
@@ -133,6 +170,52 @@ ipcMain.handle('stop-processing', () => {
   activeChild.kill('SIGTERM');
   activeChild = null;
   return { success: true };
+});
+
+// ─── Drive Tags ──────────────────────────────────────────────────────────────
+
+ipcMain.handle('get-drive-tags', (_e, filePath) => {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    return { success: true, driveTags: data.driveTags ?? {} };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('set-drive-tags', (_e, { filePath, driveKey, tags }) => {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    if (!data.driveTags) data.driveTags = {};
+
+    if (tags.length === 0) {
+      delete data.driveTags[driveKey];
+    } else {
+      data.driveTags[driveKey] = tags;
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-all-tag-names', (_e, filePath) => {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    const driveTags = data.driveTags ?? {};
+    const set = new Set();
+    for (const tags of Object.values(driveTags)) {
+      for (const t of tags) set.add(t);
+    }
+    return { success: true, tags: [...set].sort() };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle('repair-gps', async (_e, filePath) => {
