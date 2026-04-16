@@ -39,7 +39,7 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 }
 
 Menu.setApplicationMenu(null);
@@ -78,7 +78,7 @@ ipcMain.handle('find-drive-data', async (_e, dir) => {
   return fs.existsSync(filePath) ? filePath : null;
 });
 
-ipcMain.handle('get-default-output-dir', () => __dirname);
+ipcMain.handle('get-default-output-dir', () => path.join(__dirname, '..', '..'));
 
 ipcMain.handle('check-drive-data', (_e, dir) =>
   fs.existsSync(path.join(dir, 'drive-data.json'))
@@ -104,7 +104,7 @@ ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(raw);
-    const { groupIntoDrives } = await import('./grouper.js');
+    const { groupIntoDrives } = await import('../processing/grouper.js');
     const { drives, timeGroupCount, routeCount, droppedCount } = groupIntoDrives(data.routes ?? []);
     // Attach tags to drives
     const driveTags = data.driveTags ?? {};
@@ -139,7 +139,7 @@ ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
 ipcMain.handle('start-processing', async (_e, { clipsDir, outputDir, workerCount }) => {
   if (activeChild) return { success: false, error: 'Processing already running' };
 
-  const scriptPath = path.join(__dirname, 'process.js');
+  const scriptPath = path.join(__dirname, '..', 'processing', 'process.js');
   const outputPath = path.join(outputDir, 'drive-data.json');
   const args = [scriptPath, clipsDir, outputPath];
   if (workerCount && workerCount > 0) args.push(String(workerCount));
@@ -227,15 +227,70 @@ ipcMain.handle('get-all-tag-names', (_e, filePath) => {
   }
 });
 
-ipcMain.handle('repair-gps', async (_e, filePath) => {
+ipcMain.handle('revert-gps', (_e, filePath) => {
   try {
+    const bakPath = filePath + '.bak';
+    if (!fs.existsSync(bakPath)) return { success: false, error: 'No backup file found.' };
+    fs.copyFileSync(bakPath, filePath);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('has-gps-backup', (_e, filePath) => {
+  return fs.existsSync(filePath + '.bak');
+});
+
+ipcMain.handle('check-online', async () => {
+  try {
+    await new Promise((resolve, reject) => {
+      const req = require('https').get('https://router.project-osrm.org/health', { timeout: 5000 }, (res) => {
+        resolve(res.statusCode);
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    });
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+async function fetchOSRMRoute(startLat, startLng, endLat, endLng) {
+  const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+  return new Promise((resolve, reject) => {
+    require('https').get(url, { timeout: 10000 }, (res) => {
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          if (json.code === 'Ok' && json.routes && json.routes.length > 0) {
+            const coords = json.routes[0].geometry.coordinates.map((c) => [c[1], c[0]]);
+            resolve(coords);
+          } else {
+            resolve(null);
+          }
+        } catch { resolve(null); }
+      });
+    }).on('error', reject).on('timeout', function () { this.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+function sendRepairProgress(phase, current, total, etaSec) {
+  mainWindow?.webContents.send('repair-progress', { phase, current, total, etaSec });
+}
+
+ipcMain.handle('repair-gps', async (_e, { filePath, useRouting }) => {
+  try {
+    sendRepairProgress('Reading…', 0, 1);
     const raw = fs.readFileSync(filePath, 'utf-8');
     fs.copyFileSync(filePath, filePath + '.bak');
     const data = JSON.parse(raw);
-    const routes = data.routes ?? [];
-    let removedPoints = 0;
-    let removedRoutes = 0;
+    let routes = data.routes ?? [];
     let bridgedGaps = 0;
+    let routedGaps = 0;
 
     const toRad = (d) => (d * Math.PI) / 180;
     const haversineM = (lat1, lon1, lat2, lon2) => {
@@ -255,67 +310,40 @@ ipcMain.handle('repair-gps', async (_e, filePath) => {
       return isNaN(t.getTime()) ? null : t;
     };
 
-    // --- Phase 1: Clean invalid coordinates ---
-    for (let r = routes.length - 1; r >= 0; r--) {
-      const pts = routes[r].points;
-      if (!pts || pts.length === 0) continue;
-
-      // Remove null/near-zero coordinates
-      for (let i = pts.length - 1; i >= 0; i--) {
-        const lat = pts[i][0], lng = pts[i][1];
-        if ((Math.abs(lat) < 1 && Math.abs(lng) < 1) || lat == null || lng == null) {
-          pts.splice(i, 1);
-          removedPoints++;
-        }
-      }
-
-      // Remove points far from the median cluster (GPS pre-lock junk)
-      if (pts.length > 4) {
-        const q1 = Math.floor(pts.length * 0.25);
-        const q3 = Math.floor(pts.length * 0.75);
-        let mLat = 0, mLng = 0, cnt = 0;
-        for (let i = q1; i <= q3; i++) { mLat += pts[i][0]; mLng += pts[i][1]; cnt++; }
-        mLat /= cnt; mLng /= cnt;
-        for (let i = pts.length - 1; i >= 0; i--) {
-          if (haversineM(pts[i][0], pts[i][1], mLat, mLng) > 1000000) { // 1,000 km
-            pts.splice(i, 1);
-            removedPoints++;
-          }
-        }
-      }
-
-      if (pts.length === 0) {
-        routes.splice(r, 1);
-        removedRoutes++;
-      }
+    // --- Phase 0: Remove existing bridge routes so they can be re-bridged ---
+    const beforeCount = routes.length;
+    routes = routes.filter((r) => !r.file.includes('-front-bridge.mp4'));
+    data.routes = routes;
+    if (data.processedFiles) {
+      data.processedFiles = data.processedFiles.filter((f) => !f.includes('-front-bridge.mp4'));
     }
+    const removedBridges = beforeCount - routes.length;
 
-    // --- Phase 2: Bridge gaps between consecutive non-parked clips ---
-    // Sort routes by timestamp
+    // --- Bridge gaps ---
+    // Only bridge gaps > 60s (normal clip boundaries are ~60s and don't need bridging)
     const GEAR_PARK = 0;
-    const MAX_BRIDGE_MS = 5 * 60 * 1000; // 5 minutes
+    const MIN_BRIDGE_MS = 60 * 1000;
+    const MAX_BRIDGE_MS = 5 * 60 * 1000;
     const timedRoutes = routes
       .map((r, idx) => ({ idx, ts: parseTs(r.file), route: r }))
       .filter((r) => r.ts !== null)
       .sort((a, b) => a.ts - b.ts);
 
-    const bridgeRoutes = [];
+    // First pass: quickly identify gaps that need bridging
+    sendRepairProgress('Scanning for gaps…', 0, 1);
+    const gaps = [];
     for (let i = 0; i < timedRoutes.length - 1; i++) {
       const cur = timedRoutes[i];
       const next = timedRoutes[i + 1];
       const curR = cur.route;
       const nextR = next.route;
 
-      // Check time gap: clip duration is ~60s, so expected next = cur.ts + 60s
       const curEnd = new Date(cur.ts.getTime() + 60000);
       const gapMs = next.ts - curEnd;
-      if (gapMs <= 0 || gapMs > MAX_BRIDGE_MS) continue;
-
-      // Both clips must have points
+      if (gapMs <= MIN_BRIDGE_MS || gapMs > MAX_BRIDGE_MS) continue;
       if (!curR.points || curR.points.length === 0) continue;
       if (!nextR.points || nextR.points.length === 0) continue;
 
-      // Check gear: last gear of current clip must not be park
       const curLastGear = curR.gearRuns && curR.gearRuns.length > 0
         ? curR.gearRuns[curR.gearRuns.length - 1].gear
         : (curR.gearStates && curR.gearStates.length > 0 ? curR.gearStates[curR.gearStates.length - 1] : null);
@@ -324,55 +352,78 @@ ipcMain.handle('repair-gps', async (_e, filePath) => {
         : (nextR.gearStates && nextR.gearStates.length > 0 ? nextR.gearStates[0] : null);
 
       if (curLastGear === GEAR_PARK || nextFirstGear === GEAR_PARK) continue;
-
-      // Same date
       if (curR.date !== nextR.date) continue;
 
-      // Interpolate between last point of cur and first point of next
-      const lastPt = curR.points[curR.points.length - 1];
-      const firstPt = nextR.points[0];
-      const nSteps = Math.max(2, Math.round(gapMs / 1000)); // ~1 point per second
-      const interpPoints = [];
-      const interpGears = [];
-      const interpAP = [];
-      const interpSpeeds = [];
-      const interpAccel = [];
+      gaps.push({
+        lastPt: curR.points[curR.points.length - 1],
+        firstPt: nextR.points[0],
+        curEnd,
+        gapMs,
+        curLastGear,
+        date: curR.date,
+      });
+    }
 
-      for (let s = 1; s < nSteps; s++) {
-        const t = s / nSteps;
-        interpPoints.push([
-          lastPt[0] + (firstPt[0] - lastPt[0]) * t,
-          lastPt[1] + (firstPt[1] - lastPt[1]) * t,
-        ]);
-        interpGears.push(curLastGear ?? 1);
-        interpAP.push(0);
-        // Estimate speed from distance/time
-        const distM = haversineM(lastPt[0], lastPt[1], firstPt[0], firstPt[1]);
-        interpSpeeds.push(distM / (gapMs / 1000));
-        interpAccel.push(0);
+    // Second pass: bridge each gap with progress
+    const bridgeRoutes = [];
+    const bridgeStartMs = Date.now();
+    for (let g = 0; g < gaps.length; g++) {
+      const elapsedMs = Date.now() - bridgeStartMs;
+      const etaSec = g > 0 ? Math.round((elapsedMs / g) * (gaps.length - g) / 1000) : 0;
+      sendRepairProgress('Bridging…', g + 1, gaps.length, etaSec);
+      const { lastPt, firstPt, curEnd, gapMs, curLastGear, date } = gaps[g];
+
+      let interpPoints;
+
+      // Try OSRM routing if online
+      if (useRouting) {
+        try {
+          const routed = await fetchOSRMRoute(lastPt[0], lastPt[1], firstPt[0], firstPt[1]);
+          if (routed && routed.length >= 2) {
+            interpPoints = routed;
+            routedGaps++;
+          }
+        } catch {
+          // Fall back to straight line
+        }
       }
 
-      // Build a synthetic bridge route
+      // Fallback: straight-line interpolation
+      if (!interpPoints) {
+        const nSteps = Math.max(2, Math.round(gapMs / 1000));
+        interpPoints = [];
+        for (let s = 1; s < nSteps; s++) {
+          const t = s / nSteps;
+          interpPoints.push([
+            lastPt[0] + (firstPt[0] - lastPt[0]) * t,
+            lastPt[1] + (firstPt[1] - lastPt[1]) * t,
+          ]);
+        }
+      }
+
+      const nPts = interpPoints.length;
+      const distM = haversineM(lastPt[0], lastPt[1], firstPt[0], firstPt[1]);
+      const avgSpeed = distM / (gapMs / 1000);
+
       const bridgeTs = new Date(curEnd.getTime());
       const pad = (n) => String(n).padStart(2, '0');
-      const synthFile = `${curR.date}/${curR.date}_${pad(bridgeTs.getHours())}-${pad(bridgeTs.getMinutes())}-${pad(bridgeTs.getSeconds())}-front-bridge.mp4`;
+      const synthFile = `${date}/${date}_${pad(bridgeTs.getHours())}-${pad(bridgeTs.getMinutes())}-${pad(bridgeTs.getSeconds())}-front-bridge.mp4`;
 
       bridgeRoutes.push({
         file: synthFile,
-        date: curR.date,
+        date,
         points: interpPoints,
-        gearStates: interpGears,
-        autopilotStates: interpAP,
-        speeds: interpSpeeds,
-        accelPositions: interpAccel,
+        gearStates: new Array(nPts).fill(curLastGear ?? 1),
+        autopilotStates: new Array(nPts).fill(0),
+        speeds: new Array(nPts).fill(avgSpeed),
+        accelPositions: new Array(nPts).fill(0),
         rawParkCount: 0,
-        rawFrameCount: interpPoints.length,
-        gearRuns: [{ gear: curLastGear ?? 1, frames: interpPoints.length }],
+        rawFrameCount: nPts,
+        gearRuns: [{ gear: curLastGear ?? 1, frames: nPts }],
       });
       bridgedGaps++;
     }
 
-    // Add bridge routes and mark them as processed
     for (const br of bridgeRoutes) {
       routes.push(br);
       if (!data.processedFiles) data.processedFiles = [];
@@ -380,7 +431,7 @@ ipcMain.handle('repair-gps', async (_e, filePath) => {
     }
 
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
-    return { success: true, removedPoints, removedRoutes, bridgedGaps };
+    return { success: true, bridgedGaps, routedGaps, removedBridges };
   } catch (err) {
     return { success: false, error: err.message };
   }

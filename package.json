@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Standalone Tesla dashcam drives processor - replicates Sentry USB drives processing",
-  "main": "electron-main.cjs",
+  "main": "src/main/electron-main.cjs",
   "scripts": {
     "start": "electron .",
-    "process": "node process.js",
+    "process": "node src/processing/process.js",
     "build": "electron-builder --win",
     "publish": "electron-builder --win --publish always"
   },
@@ -17,20 +17,13 @@
       "output": "dist"
     },
     "files": [
-      "electron-main.cjs",
-      "electron-preload.cjs",
-      "renderer.js",
-      "index.html",
-      "styles.css",
-      "process.js",
-      "grouper.js",
-      "extract.js",
-      "worker.js",
+      "src/**/*",
+      "assets/**/*",
       "node_modules/**/*"
     ],
     "win": {
       "target": "nsis",
-      "icon": "icon.ico"
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": true,

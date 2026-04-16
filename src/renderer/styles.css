@@ -78,16 +78,16 @@ html, body {
 #app-logo {
   width: 30px;
   height: 30px;
-  background: var(--accent);
+  background: var(--blue);
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.05em;
   color: #fff;
   flex-shrink: 0;
+}
+#app-logo .material-icons {
+  font-size: 18px;
 }
 
 #app-title {
@@ -201,8 +201,7 @@ html, body {
 .btn-row .btn-primary,
 .btn-row .btn-danger { flex: 1; align-self: auto; }
 
-#btn-load-drives,
-#btn-repair-gps {
+#btn-load-drives {
   width: 100%;
   padding: 10px 14px;
   font-size: 13px;
@@ -527,6 +526,39 @@ html, body {
   padding-left: 48px;
 }
 
+/* ── Repair Progress ───────────────────────────────────────────────────── */
+#repair-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.repair-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+#repair-eta {
+  color: var(--text-dim);
+}
+
+.repair-progress-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+#repair-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--blue);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
 /* ── Drive Tags ────────────────────────────────────────────────────────── */
 .tag-pill {
   display: inline-flex;
@@ -635,7 +667,8 @@ html, body {
   color: var(--accent);
 }
 
-.tag-input-row {
+.tag-input-row,
+.list-tag-input-row {
   position: relative;
   margin-top: 6px;
 }

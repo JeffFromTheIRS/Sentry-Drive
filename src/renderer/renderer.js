@@ -362,6 +362,7 @@ async function autoLoadDriveData(filePath) {
     renderDriveList(drives);
     renderOverviewOnMap();
     document.getElementById('btn-repair-gps').disabled = false;
+    updateRevertButton();
 
     // Switch to drives tab
     document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -513,6 +514,45 @@ function fmtDuration(sec) {
 function initViewDrivesTab() {
   document.getElementById('btn-load-drives').addEventListener('click', loadDrives);
   document.getElementById('btn-repair-gps').addEventListener('click', repairGPS);
+  document.getElementById('btn-revert-gps').addEventListener('click', revertGPS);
+}
+
+async function updateRevertButton() {
+  const btn = document.getElementById('btn-revert-gps');
+  if (loadedFilePath) {
+    const hasBackup = await window.electronAPI.hasGPSBackup(loadedFilePath);
+    btn.disabled = !hasBackup;
+  } else {
+    btn.disabled = true;
+  }
+}
+
+async function revertGPS() {
+  if (!loadedFilePath) return;
+
+  const confirmed = confirm('Revert drive data to the backup created before the last Check Drives?\n\nThis will undo any GPS repairs and bridge routes.');
+  if (!confirmed) return;
+
+  const result = await window.electronAPI.revertGPS(loadedFilePath);
+  if (!result.success) {
+    alert(`Failed to revert:\n${result.error}`);
+    return;
+  }
+
+  // Reload
+  showLoading();
+  const reloaded = await window.electronAPI.loadAndGroupDrives(loadedFilePath);
+  if (reloaded.success) {
+    drives = reloaded.drives;
+    overviewRoutes = reloaded.overviewRoutes ?? [];
+    refreshAllTags(reloaded.driveTags ?? {});
+    renderTagFilter();
+    renderDriveStats(drives, reloaded);
+    renderDriveList(drives);
+    renderOverviewOnMap();
+  }
+  hideLoading();
+  alert('Reverted to backup successfully.');
 }
 
 async function repairGPS() {
@@ -522,17 +562,64 @@ async function repairGPS() {
   btn.textContent = 'Checking…';
   btn.disabled = true;
 
+  const progressEl = document.getElementById('repair-progress');
+  const phaseEl = document.getElementById('repair-phase');
+  const pctEl = document.getElementById('repair-pct');
+  const barEl = document.getElementById('repair-bar');
+
   try {
-    const result = await window.electronAPI.repairGPS(loadedFilePath);
+    // Check connectivity for road-snapped bridging
+    const isOnline = await window.electronAPI.checkOnline();
+    let useRouting = isOnline;
+
+    if (!isOnline) {
+      const proceed = confirm(
+        'You are offline. Gap bridging will use straight lines instead of road-following routes.\n\n' +
+        'You can re-run Check Drives later when online to replace straight lines with road routes.\n\n' +
+        'Continue?'
+      );
+      if (!proceed) return;
+    }
+
+    // Show progress bar
+    progressEl.classList.remove('hidden');
+    phaseEl.textContent = 'Starting…';
+    pctEl.textContent = '';
+    document.getElementById('repair-eta').textContent = '';
+    barEl.style.width = '0%';
+
+    const etaEl = document.getElementById('repair-eta');
+    const removeProgressListener = window.electronAPI.onRepairProgress(({ phase, current, total, etaSec }) => {
+      phaseEl.textContent = phase;
+      if (total > 0) {
+        const pct = Math.round((current / total) * 100);
+        pctEl.textContent = `${pct}%`;
+        barEl.style.width = `${pct}%`;
+        if (etaSec > 0) {
+          const m = Math.floor(etaSec / 60);
+          const s = etaSec % 60;
+          etaEl.textContent = m > 0 ? `${m}m ${s}s left` : `${s}s left`;
+        } else {
+          etaEl.textContent = '';
+        }
+      }
+    });
+
+    btn.textContent = useRouting ? 'Routing…' : 'Checking…';
+
+    const result = await window.electronAPI.repairGPS({ filePath: loadedFilePath, useRouting });
+    removeProgressListener();
+
     if (!result.success) {
       alert(`Failed to repair GPS data:\n${result.error}`);
       return;
     }
 
     const msgs = [];
-    if (result.removedPoints > 0) msgs.push(`Removed ${result.removedPoints} invalid point(s)`);
-    if (result.removedRoutes > 0) msgs.push(`Removed ${result.removedRoutes} empty route(s)`);
-    if (result.bridgedGaps > 0) msgs.push(`Bridged ${result.bridgedGaps} gap(s) with interpolated paths`);
+    if (result.removedBridges > 0) msgs.push(`Removed ${result.removedBridges} old bridge route(s)`);
+    if (result.routedGaps > 0) msgs.push(`Bridged ${result.routedGaps} gap(s) with road routes`);
+    const straightGaps = result.bridgedGaps - (result.routedGaps ?? 0);
+    if (straightGaps > 0) msgs.push(`Bridged ${straightGaps} gap(s) with straight lines`);
     alert(msgs.length > 0 ? `Repair complete:\n${msgs.join('\n')}` : 'No issues found.');
 
     // Reload the repaired file
@@ -551,6 +638,8 @@ async function repairGPS() {
   } finally {
     btn.textContent = 'Check Drives';
     btn.disabled = false;
+    progressEl.classList.add('hidden');
+    updateRevertButton();
   }
 }
 
@@ -585,6 +674,7 @@ async function loadDrives() {
     renderDriveList(drives);
     renderOverviewOnMap();
     document.getElementById('btn-repair-gps').disabled = false;
+    updateRevertButton();
   } finally {
     btn.textContent = 'Load Drives';
     btn.disabled = false;
@@ -709,7 +799,7 @@ function buildDriveItem(drive) {
     : '';
 
   const tagPills = (drive.tags ?? []).map((t) =>
-    `<span class="tag-pill">${t}</span>`
+    `<span class="tag-pill tag-removable" data-tag="${t}">${t}<button class="tag-remove" data-tag="${t}">&times;</button></span>`
   ).join('');
 
   item.innerHTML = `
@@ -723,11 +813,79 @@ function buildDriveItem(drive) {
       <span>${drive.avgSpeedMph.toFixed(0)} mph</span>
     </div>
     ${disengageHtml}
-    ${tagPills ? `<div class="drive-item-tags">${tagPills}</div>` : ''}
+    <div class="drive-item-tags">
+      ${tagPills}
+      <button class="tag-add-btn list-tag-add" title="Add tag">+</button>
+    </div>
+    <div class="list-tag-input-row hidden">
+      <input type="text" class="tag-input list-tag-input" placeholder="New tag…" />
+      <div class="tag-suggestions list-tag-suggestions hidden"></div>
+    </div>
   `;
+
+  // Tag remove buttons
+  item.querySelectorAll('.tag-remove').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeTag(drive, btn.dataset.tag);
+    });
+  });
+
+  // Tag add button
+  item.querySelector('.list-tag-add').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const row = item.querySelector('.list-tag-input-row');
+    row.classList.toggle('hidden');
+    if (!row.classList.contains('hidden')) {
+      const input = item.querySelector('.list-tag-input');
+      input.value = '';
+      input.focus();
+    }
+  });
+
+  // Tag input
+  const tagInput = item.querySelector('.list-tag-input');
+  tagInput.addEventListener('click', (e) => e.stopPropagation());
+  tagInput.addEventListener('input', () => {
+    showListTagSuggestions(drive, item, tagInput.value);
+  });
+  tagInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      const val = tagInput.value.trim();
+      if (val) addTag(drive, val);
+      item.querySelector('.list-tag-input-row').classList.add('hidden');
+    } else if (e.key === 'Escape') {
+      item.querySelector('.list-tag-input-row').classList.add('hidden');
+    }
+  });
 
   item.addEventListener('click', () => selectDrive(drive));
   return item;
+}
+
+function showListTagSuggestions(drive, item, query) {
+  const container = item.querySelector('.list-tag-suggestions');
+  const existing = drive.tags ?? [];
+  const filtered = allTags.filter((t) => !existing.includes(t) && t.toLowerCase().includes(query.toLowerCase()));
+
+  if (filtered.length === 0 || !query) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+  container.innerHTML = filtered.map((t) => `<div class="tag-suggestion" data-tag="${t}">${t}</div>`).join('');
+
+  container.querySelectorAll('.tag-suggestion').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      addTag(drive, el.dataset.tag);
+      item.querySelector('.list-tag-input-row').classList.add('hidden');
+    });
+  });
 }
 
 function selectDrive(drive) {
@@ -745,9 +903,13 @@ function selectDrive(drive) {
   }
   selectedDriveId = drive.id;
 
-  // Grey out overview lines
+  // Grey out other drives, hide the selected one (replaced by detail view)
   for (const layer of overviewLayers) {
-    if (layer.setStyle) layer.setStyle({ color: '#8888a0', opacity: 1 });
+    if (layer._driveId === drive.id) {
+      map.removeLayer(layer);
+    } else if (layer.setStyle) {
+      layer.setStyle({ color: '#555566', opacity: 1 });
+    }
   }
 
   document.getElementById('btn-back-overview').classList.remove('hidden');
@@ -763,9 +925,10 @@ function deselectDrive() {
   document.getElementById('map-legend').classList.add('hidden');
   document.getElementById('btn-back-overview').classList.add('hidden');
 
-  // Restore overview line colors
+  // Restore overview lines to original style
   for (const layer of overviewLayers) {
-    if (layer.setStyle) layer.setStyle({ color: '#3b82f6', opacity: 0.4 });
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    if (layer.setStyle) layer.setStyle({ color: '#3b82f6', opacity: 0.5 });
   }
 
   // Fit map to all drives
@@ -808,6 +971,7 @@ function renderOverviewOnMap() {
       smoothFactor: 1.5,
     }).addTo(map);
     line._baseWeight = 2.5;
+    line._driveId = drive.id;
 
     line.on('click', (e) => { L.DomEvent.stopPropagation(e); selectDrive(drive); });
     overviewLayers.push(line);

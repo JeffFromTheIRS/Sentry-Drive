@@ -24,6 +24,7 @@
     <div id="left-panel">
 
       <div id="app-header">
+        <div id="app-logo"><span class="material-icons">map</span></div>
         <div id="app-title">Sentry Drive</div>
       </div>
 
@@ -83,7 +84,19 @@
       <div id="tab-drives" class="tab-pane">
 
         <button id="btn-load-drives" class="btn-primary">Load Drives</button>
-        <button id="btn-repair-gps" class="btn-primary btn-secondary" disabled>Check Drives</button>
+        <div class="btn-row">
+          <button id="btn-repair-gps" class="btn-primary btn-secondary" disabled>Check Drives</button>
+          <button id="btn-revert-gps" class="btn-danger" disabled>Revert</button>
+        </div>
+
+        <div id="repair-progress" class="hidden">
+          <div class="repair-progress-label">
+            <span id="repair-phase">Checking…</span>
+            <span id="repair-eta"></span>
+            <span id="repair-pct"></span>
+          </div>
+          <div class="repair-progress-track"><div id="repair-bar"></div></div>
+        </div>
 
         <div id="tag-filter" class="hidden"></div>
 

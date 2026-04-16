@@ -10,7 +10,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkDriveData: (dir) => ipcRenderer.invoke('check-drive-data', dir),
   getCpuCount: () => ipcRenderer.invoke('get-cpu-count'),
   loadAndGroupDrives: (fp) => ipcRenderer.invoke('load-and-group-drives', fp),
-  repairGPS: (fp) => ipcRenderer.invoke('repair-gps', fp),
+  repairGPS: (args) => ipcRenderer.invoke('repair-gps', args),
+  checkOnline: () => ipcRenderer.invoke('check-online'),
+  revertGPS: (fp) => ipcRenderer.invoke('revert-gps', fp),
+  hasGPSBackup: (fp) => ipcRenderer.invoke('has-gps-backup', fp),
+  onRepairProgress: (cb) => {
+    const listener = (_ev, data) => cb(data);
+    ipcRenderer.on('repair-progress', listener);
+    return () => ipcRenderer.off('repair-progress', listener);
+  },
   getDriveTags: (fp) => ipcRenderer.invoke('get-drive-tags', fp),
   setDriveTags: (args) => ipcRenderer.invoke('set-drive-tags', args),
   getAllTagNames: (fp) => ipcRenderer.invoke('get-all-tag-names', fp),
