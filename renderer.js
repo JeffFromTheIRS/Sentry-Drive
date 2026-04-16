@@ -768,10 +768,12 @@ function deselectDrive() {
     if (layer.setStyle) layer.setStyle({ color: '#3b82f6', opacity: 0.4 });
   }
 
-  // Fit map to all routes
+  // Fit map to all drives
   const allLatLngs = [];
-  for (const pts of overviewRoutes) {
-    for (const p of pts) allLatLngs.push([p[0], p[1]]);
+  for (const drive of drives) {
+    if (!drive.points || drive.points.length < 2) continue;
+    allLatLngs.push([drive.points[0][0], drive.points[0][1]]);
+    allLatLngs.push([drive.points[drive.points.length - 1][0], drive.points[drive.points.length - 1][1]]);
   }
   if (allLatLngs.length > 0) {
     map.fitBounds(L.latLngBounds(allLatLngs), { padding: [30, 30] });
@@ -793,24 +795,52 @@ function renderOverviewOnMap() {
 
   const allLatLngs = [];
 
-  // Draw one polyline per raw route/clip (matches Sentry USB overview behavior)
-  for (const pts of overviewRoutes) {
-    const lls = pts.map((p) => [p[0], p[1]]);
+  // Draw one polyline per drive with downsampled points for performance
+  for (const drive of drives) {
+    if (!drive.points || drive.points.length < 2) continue;
+    const lls = downsample(drive.points, 200).map((p) => [p[0], p[1]]);
     allLatLngs.push(...lls);
 
     const line = L.polyline(lls, {
       color: '#3b82f6',
       weight: getWeight(2.5),
-      opacity: 0.4,
+      opacity: 0.5,
       smoothFactor: 1.5,
     }).addTo(map);
     line._baseWeight = 2.5;
+
+    line.on('click', (e) => { L.DomEvent.stopPropagation(e); selectDrive(drive); });
     overviewLayers.push(line);
   }
 
   if (allLatLngs.length > 0) {
     map.fitBounds(L.latLngBounds(allLatLngs), { padding: [30, 30] });
   }
+}
+
+function downsample(points, maxPoints) {
+  // First pass: remove outlier points that jump >50km from both neighbors
+  const clean = [];
+  for (let i = 0; i < points.length; i++) {
+    const lat = points[i][0], lng = points[i][1];
+    if (Math.abs(lat) < 1 && Math.abs(lng) < 1) continue; // null island
+    if (i === 0 || i === points.length - 1) { clean.push(points[i]); continue; }
+    const prev = points[i - 1], next = points[i + 1];
+    const dPrev = Math.abs(lat - prev[0]) + Math.abs(lng - prev[1]);
+    const dNext = Math.abs(lat - next[0]) + Math.abs(lng - next[1]);
+    // ~0.5 degrees ≈ 50km — if far from both neighbors, skip it
+    if (dPrev > 0.5 && dNext > 0.5) continue;
+    clean.push(points[i]);
+  }
+  if (clean.length <= maxPoints) return clean;
+  // Second pass: evenly sample
+  const step = (clean.length - 1) / (maxPoints - 1);
+  const result = [];
+  for (let i = 0; i < maxPoints - 1; i++) {
+    result.push(clean[Math.round(i * step)]);
+  }
+  result.push(clean[clean.length - 1]);
+  return result;
 }
 
 function drawSelectedDrive(drive) {
