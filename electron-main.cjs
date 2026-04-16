@@ -112,9 +112,18 @@ ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
       d.tags = driveTags[d.startTime] ?? [];
     }
 
+    // Extract lightweight route points for overview map (one polyline per clip)
+    const overviewRoutes = [];
+    for (const r of (data.routes ?? [])) {
+      if (r.points && r.points.length > 1) {
+        overviewRoutes.push(r.points);
+      }
+    }
+
     return {
       success: true,
       drives,
+      overviewRoutes,
       driveTags,
       totalRoutes: (data.routes ?? []).length,
       processedFileCount: (data.processedFiles ?? []).length,

@@ -7,6 +7,7 @@ let map = null;
 let overviewLayers = [];       // faint lines for all drives
 let selectedLayers = [];       // highlighted route for selected drive
 let drives = [];
+let overviewRoutes = [];   // raw route points for overview map (one per clip)
 let loadedFilePath = null;
 let selectedDriveId = null;
 let removeOutputListener = null;
@@ -58,7 +59,7 @@ function initMap() {
 
 function getWeight(base) {
   const zoom = map.getZoom();
-  return Math.max(1, base * (zoom / 10));
+  return Math.max(2, base * (zoom / 10));
 }
 
 function updateLineWeights() {
@@ -354,11 +355,12 @@ async function autoLoadDriveData(filePath) {
     loadedFilePath = filePath;
     localStorage.setItem('lastDriveDataPath', filePath);
     drives = result.drives;
+    overviewRoutes = result.overviewRoutes ?? [];
     refreshAllTags(result.driveTags ?? {});
     renderTagFilter();
     renderDriveStats(drives, result);
     renderDriveList(drives);
-    renderOverviewOnMap(drives);
+    renderOverviewOnMap();
     document.getElementById('btn-repair-gps').disabled = false;
 
     // Switch to drives tab
@@ -538,11 +540,12 @@ async function repairGPS() {
     const reloaded = await window.electronAPI.loadAndGroupDrives(loadedFilePath);
     if (reloaded.success) {
       drives = reloaded.drives;
+      overviewRoutes = reloaded.overviewRoutes ?? [];
       refreshAllTags(reloaded.driveTags ?? {});
       renderTagFilter();
       renderDriveStats(drives, reloaded);
       renderDriveList(drives);
-      renderOverviewOnMap(drives);
+      renderOverviewOnMap();
     }
     hideLoading();
   } finally {
@@ -575,11 +578,12 @@ async function loadDrives() {
     loadedFilePath = filePath;
     localStorage.setItem('lastDriveDataPath', filePath);
     drives = result.drives;
+    overviewRoutes = result.overviewRoutes ?? [];
     refreshAllTags(result.driveTags ?? {});
     renderTagFilter();
     renderDriveStats(drives, result);
     renderDriveList(drives);
-    renderOverviewOnMap(drives);
+    renderOverviewOnMap();
     document.getElementById('btn-repair-gps').disabled = false;
   } finally {
     btn.textContent = 'Load Drives';
@@ -636,9 +640,35 @@ function renderDriveList(drives) {
     return;
   }
 
+  let currentDate = '';
   for (const drive of sorted) {
+    const driveDate = drive.startTime.slice(0, 10);
+    if (driveDate !== currentDate) {
+      currentDate = driveDate;
+      const header = document.createElement('div');
+      header.className = 'drive-date-header';
+      header.textContent = formatDateHeader(driveDate);
+      list.appendChild(header);
+    }
     list.appendChild(buildDriveItem(drive));
   }
+}
+
+function formatDateHeader(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+}
+
+function formatTime12h(isoStr) {
+  const d = new Date(isoStr);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDuration(ms) {
+  const totalMin = Math.floor(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m} min`;
 }
 
 function assistedBadge(drive) {
@@ -646,13 +676,21 @@ function assistedBadge(drive) {
   const ap       = drive.autosteerPercent ?? 0;
   const tacc     = drive.taccPercent      ?? 0;
   const assisted = drive.assistedPercent  ?? 0;
-  if (!assisted) return '';
+  if (!assisted) return null;
   const modeCount = (fsd > 0) + (ap > 0) + (tacc > 0);
-  if (modeCount > 1) return `Assisted ${assisted}%`;
-  if (fsd)  return `FSD ${fsd}%`;
-  if (ap)   return `AP ${ap}%`;
-  if (tacc) return `TACC ${tacc}%`;
-  return '';
+  let label, pct;
+  if (modeCount > 1) { label = 'Assisted'; pct = assisted; }
+  else if (fsd)  { label = 'FSD'; pct = fsd; }
+  else if (ap)   { label = 'AP'; pct = ap; }
+  else if (tacc) { label = 'TACC'; pct = tacc; }
+  else return null;
+
+  let cls;
+  if (fsd >= 95) cls = 'badge-green';
+  else if (fsd >= 50) cls = 'badge-blue';
+  else cls = 'badge-gray';
+
+  return `<span class="drive-badge ${cls}">${pct}% ${label}</span>`;
 }
 
 function buildDriveItem(drive) {
@@ -660,12 +698,15 @@ function buildDriveItem(drive) {
   item.className = 'drive-item';
   item.dataset.driveId = String(drive.id);
 
-  const date = drive.startTime.slice(0, 10);
-  const timeStr = drive.startTime.slice(11, 16);
-  const durH = Math.floor(drive.durationMs / 3_600_000);
-  const durM = Math.floor((drive.durationMs % 3_600_000) / 60_000);
-  const durStr = durH > 0 ? `${durH}H ${durM}M` : `${durM}M`;
+  const startTime = formatTime12h(drive.startTime);
+  const endTime = formatTime12h(drive.endTime);
+  const durStr = formatDuration(drive.durationMs);
   const badge = assistedBadge(drive);
+
+  const disengagements = drive.fsdDisengagements ?? 0;
+  const disengageHtml = disengagements > 0
+    ? `<div class="drive-disengagements">${disengagements} disengagement${disengagements !== 1 ? 's' : ''}</div>`
+    : '';
 
   const tagPills = (drive.tags ?? []).map((t) =>
     `<span class="tag-pill">${t}</span>`
@@ -673,15 +714,15 @@ function buildDriveItem(drive) {
 
   item.innerHTML = `
     <div class="drive-item-header">
-      <span class="drive-date">${date}</span>
-      <span class="drive-time">${timeStr}</span>
+      <span class="drive-time-range">${startTime} — ${endTime}</span>
+      ${badge ?? ''}
     </div>
     <div class="drive-item-stats">
-      <span class="drive-stat">${fmt(drive.distanceMi.toFixed(1))} mi</span>
-      <span class="drive-sep">·</span>
-      <span class="drive-stat">${durStr}</span>
-      ${badge ? `<span class="drive-sep">·</span><span class="drive-fsd">${badge}</span>` : ''}
+      <span>${drive.distanceMi.toFixed(1)} mi</span>
+      <span>${durStr}</span>
+      <span>${drive.avgSpeedMph.toFixed(0)} mph</span>
     </div>
+    ${disengageHtml}
     ${tagPills ? `<div class="drive-item-tags">${tagPills}</div>` : ''}
   `;
 
@@ -724,14 +765,13 @@ function deselectDrive() {
 
   // Restore overview line colors
   for (const layer of overviewLayers) {
-    if (layer.setStyle) layer.setStyle({ color: '#2266cc', opacity: 0.7 });
+    if (layer.setStyle) layer.setStyle({ color: '#3b82f6', opacity: 0.4 });
   }
 
-  // Fit map to all drives
+  // Fit map to all routes
   const allLatLngs = [];
-  for (const drive of drives) {
-    if (!drive.points || drive.points.length < 2) continue;
-    for (const p of drive.points) allLatLngs.push([p[0], p[1]]);
+  for (const pts of overviewRoutes) {
+    for (const p of pts) allLatLngs.push([p[0], p[1]]);
   }
   if (allLatLngs.length > 0) {
     map.fitBounds(L.latLngBounds(allLatLngs), { padding: [30, 30] });
@@ -744,7 +784,7 @@ function clearLayers(arr) {
   arr.length = 0;
 }
 
-function renderOverviewOnMap(drives) {
+function renderOverviewOnMap() {
   clearLayers(overviewLayers);
   clearLayers(selectedLayers);
   selectedDriveId = null;
@@ -753,19 +793,18 @@ function renderOverviewOnMap(drives) {
 
   const allLatLngs = [];
 
-  for (const drive of drives) {
-    if (!drive.points || drive.points.length < 2) continue;
-    const lls = drive.points.map((p) => [p[0], p[1]]);
+  // Draw one polyline per raw route/clip (matches Sentry USB overview behavior)
+  for (const pts of overviewRoutes) {
+    const lls = pts.map((p) => [p[0], p[1]]);
     allLatLngs.push(...lls);
 
     const line = L.polyline(lls, {
-      color: '#2266cc',
+      color: '#3b82f6',
       weight: getWeight(2.5),
-      opacity: 0.7,
+      opacity: 0.4,
+      smoothFactor: 1.5,
     }).addTo(map);
     line._baseWeight = 2.5;
-
-    line.on('click', (e) => { L.DomEvent.stopPropagation(e); selectDrive(drive); });
     overviewLayers.push(line);
   }
 
