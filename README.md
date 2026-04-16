@@ -6,7 +6,7 @@ Running Sentry USB? You can import your drive data! Simply locate your drives-da
 And in the event you're missing data due to missing footage, the Check Drives feature attempts to bridge that gap using OpenStreetMaps's routing API!
 **Note:** _Feature is currently in ALPHA and may not work as expected._
 
-* Intervention here is defined as disengagements and accelerator pushes.
+*Intervention here is defined as disengagements and accelerator pushes.
 
 <img width="2560" height="1369" alt="image" src="https://github.com/user-attachments/assets/03f0ec67-a4cc-497c-bf70-693ce7e935bb" />
 
