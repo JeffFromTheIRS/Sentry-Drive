@@ -24,7 +24,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and publish
+      - name: Build
+        run: npx electron-builder --win --publish never
+
+      - name: Upload assets to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" dist/*.exe dist/*.yml --clobber

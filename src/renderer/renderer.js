@@ -15,6 +15,16 @@ let processingStartTime = null;
 let cpuCount = 1;
 let allTags = [];          // deduplicated, sorted list of all tag names
 let activeTagFilter = '';  // currently active tag filter (empty = show all)
+let hideOtherDrives = false;
+
+// Replay state
+let replayMarker = null;
+let replayInterval = null;
+let replayPlaying = false;
+let replayIdx = 0;
+let replayDrive = null;
+let replaySpeed = 1;        // 1x, 2x, 5x, 10x
+const REPLAY_BASE_MS = 100; // base interval per point at 1x
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -169,6 +179,15 @@ function initFooter() {
 
     // Re-check for updates with new prerelease setting
     window.electronAPI.checkForUpdate();
+  });
+
+  // Hide other drives setting
+  const hideChk = document.getElementById('chk-hide-other-drives');
+  hideOtherDrives = localStorage.getItem('hideOtherDrives') === 'true';
+  hideChk.checked = hideOtherDrives;
+  hideChk.addEventListener('change', () => {
+    hideOtherDrives = hideChk.checked;
+    localStorage.setItem('hideOtherDrives', String(hideOtherDrives));
   });
 
   // Auto-check on launch
@@ -903,9 +922,11 @@ function selectDrive(drive) {
   }
   selectedDriveId = drive.id;
 
-  // Grey out other drives, hide the selected one (replaced by detail view)
+  // Handle other drive lines based on setting
   for (const layer of overviewLayers) {
     if (layer._driveId === drive.id) {
+      map.removeLayer(layer);
+    } else if (hideOtherDrives) {
       map.removeLayer(layer);
     } else if (layer.setStyle) {
       layer.setStyle({ color: '#555566', opacity: 1 });
@@ -918,6 +939,7 @@ function selectDrive(drive) {
 }
 
 function deselectDrive() {
+  cleanupReplay();
   selectedDriveId = null;
   document.querySelectorAll('.drive-item').forEach((el) => el.classList.remove('selected'));
   clearLayers(selectedLayers);
@@ -1097,6 +1119,231 @@ function drawSelectedDrive(drive) {
   } else {
     document.getElementById('map-legend').classList.add('hidden');
   }
+
+  // Add replay marker at start (navigation arrow, rotatable)
+  let initBearing = drive.points.length >= 2 ? smoothBearing(drive.points, 0, 5) : 0;
+  // If starting in reverse, flip bearing so arrow faces front of car
+  if (drive.gearStates && drive.gearStates[0] === 2) initBearing = (initBearing + 180) % 360;
+  replayMarker = L.marker(latLngs[0], {
+    icon: L.divIcon({
+      className: '',
+      html: `<img id="replay-arrow" src="../../assets/arrow.png" style="width:128px;height:128px;transform:rotate(${initBearing}deg);transition:transform 0.1s linear;filter:drop-shadow(0 0 4px rgba(0,0,0,0.5));" />`,
+      iconSize: [128, 128],
+      iconAnchor: [64, 64],
+    }),
+    zIndexOffset: 1000,
+  }).addTo(map);
+  selectedLayers.push(replayMarker);
+
+  // Initialize replay
+  initReplay(drive);
+}
+
+// ─── Drive Replay ────────────────────────────────────────────────────────────
+const GEAR_LABELS = { 0: 'P', 1: 'D', 2: 'R', 3: 'N' };
+const GEAR_CLASSES = { 0: 'gear-p', 1: 'gear-d', 2: 'gear-r', 3: 'gear-n' };
+const SPEED_FACTORS = [1, 2, 5, 10];
+let replayCurrentBearing = 0;
+
+function initReplay(drive) {
+  replayDrive = drive;
+  replayIdx = 0;
+  replaySpeed = 1;
+  replayPlaying = false;
+  // Initialize bearing to actual starting direction (flip if starting in reverse)
+  if (drive.points.length >= 2) {
+    replayCurrentBearing = smoothBearing(drive.points, 0, 5);
+    if (drive.gearStates && drive.gearStates[0] === 2) replayCurrentBearing = (replayCurrentBearing + 180) % 360;
+  } else {
+    replayCurrentBearing = 0;
+  }
+
+  const slider = document.getElementById('replay-slider');
+  slider.max = String(drive.points.length - 1);
+  slider.value = '0';
+
+  document.getElementById('replay-play-icon').textContent = 'play_arrow';
+  document.getElementById('btn-replay-speed').textContent = '1x';
+
+  // Set start/end times
+  if (drive.points.length > 0) {
+    document.getElementById('replay-time-start').textContent = formatReplayTime(drive.points[0][2]);
+    document.getElementById('replay-time-end').textContent = formatReplayTime(drive.points[drive.points.length - 1][2]);
+  }
+
+  updateReplayData(0);
+  document.getElementById('replay-bar').classList.remove('hidden');
+
+  // Wire events
+  slider.oninput = (e) => {
+    if (replayPlaying) stopReplay();
+    replayIdx = parseInt(e.target.value);
+    updateReplayPosition(replayIdx);
+  };
+
+  document.getElementById('btn-replay-play').onclick = toggleReplay;
+  document.getElementById('btn-replay-speed').onclick = cycleReplaySpeed;
+}
+
+function formatReplayTime(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function toggleReplay() {
+  if (replayPlaying) {
+    stopReplay();
+  } else {
+    startReplay();
+  }
+}
+
+function startReplay() {
+  if (!replayDrive) return;
+
+  // If at end, restart from beginning
+  if (replayIdx >= replayDrive.points.length - 1) {
+    replayIdx = 0;
+    updateReplayPosition(0);
+  }
+
+  replayPlaying = true;
+  document.getElementById('replay-play-icon').textContent = 'pause';
+
+  replayInterval = setInterval(() => {
+    if (!replayDrive) { stopReplay(); return; }
+
+    const next = replayIdx + 1;
+    if (next >= replayDrive.points.length) {
+      stopReplay();
+      return;
+    }
+
+    replayIdx = next;
+    updateReplayPosition(next);
+  }, REPLAY_BASE_MS / replaySpeed);
+}
+
+function stopReplay() {
+  replayPlaying = false;
+  if (replayInterval) { clearInterval(replayInterval); replayInterval = null; }
+  document.getElementById('replay-play-icon').textContent = 'play_arrow';
+}
+
+function cycleReplaySpeed() {
+  const curIdx = SPEED_FACTORS.indexOf(replaySpeed);
+  replaySpeed = SPEED_FACTORS[(curIdx + 1) % SPEED_FACTORS.length];
+  document.getElementById('btn-replay-speed').textContent = `${replaySpeed}x`;
+
+  // Restart interval at new speed if playing
+  if (replayPlaying) {
+    clearInterval(replayInterval);
+    replayInterval = setInterval(() => {
+      if (!replayDrive) { stopReplay(); return; }
+      const next = replayIdx + 1;
+      if (next >= replayDrive.points.length) { stopReplay(); return; }
+      replayIdx = next;
+      updateReplayPosition(next);
+    }, REPLAY_BASE_MS / replaySpeed);
+  }
+}
+
+function updateReplayPosition(idx) {
+  if (!replayDrive) return;
+  const pts = replayDrive.points;
+  const pt = pts[idx];
+
+  // Move marker with smooth transition on the Leaflet container
+  if (replayMarker) {
+    const el = replayMarker.getElement();
+    if (el && replayPlaying) {
+      el.style.transition = `transform ${REPLAY_BASE_MS / replaySpeed}ms linear`;
+    } else if (el) {
+      el.style.transition = 'none';
+    }
+    replayMarker.setLatLng([pt[0], pt[1]]);
+  }
+
+  // Rotate arrow to face the direction the front of the car points
+  const arrow = document.getElementById('replay-arrow');
+  if (arrow) {
+    let targetBearing = smoothBearing(pts, idx, 5);
+
+    // When reversing, the car moves backward — flip bearing so arrow
+    // points where the front of the car faces, not the direction of travel
+    const isReversing = replayDrive.gearStates && replayDrive.gearStates[idx] === 2;
+    if (isReversing) targetBearing = (targetBearing + 180) % 360;
+
+    // Shortest rotation path (avoid 359→1 spinning backwards)
+    let diff = targetBearing - replayCurrentBearing;
+    if (diff > 180) diff -= 360;
+    if (diff < -180) diff += 360;
+    // Lerp toward target to further dampen jitter
+    replayCurrentBearing += diff * 0.4;
+
+    arrow.style.transform = `rotate(${replayCurrentBearing}deg)`;
+  }
+
+  // Update slider
+  document.getElementById('replay-slider').value = String(idx);
+
+  // Update data display
+  updateReplayData(idx);
+}
+
+function calcBearing(lat1, lon1, lat2, lon2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const dLon = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+            Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+function smoothBearing(pts, idx, window) {
+  // Average bearing over nearby point pairs to prevent jitter
+  const start = Math.max(0, idx - Math.floor(window / 2));
+  const end = Math.min(pts.length - 1, idx + Math.ceil(window / 2));
+  let sinSum = 0, cosSum = 0, count = 0;
+  for (let i = start; i < end; i++) {
+    const b = calcBearing(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+    const rad = (b * Math.PI) / 180;
+    sinSum += Math.sin(rad);
+    cosSum += Math.cos(rad);
+    count++;
+  }
+  if (count === 0) return 0;
+  return ((Math.atan2(sinSum / count, cosSum / count) * 180) / Math.PI + 360) % 360;
+}
+
+function updateReplayData(idx) {
+  if (!replayDrive) return;
+  const drive = replayDrive;
+  const pt = drive.points[idx];
+
+  // Speed (pt[3] is m/s)
+  const speedMph = (pt[3] * 2.23694).toFixed(0);
+  document.getElementById('replay-speed-val').textContent = `${speedMph} mph`;
+
+  // FSD
+  const fsdEl = document.getElementById('replay-fsd-val');
+  const fsdSpan = document.getElementById('replay-fsd-span');
+  if (drive.fsdStates && drive.fsdStates[idx] !== undefined) {
+    fsdSpan.style.display = '';
+    const engaged = drive.fsdStates[idx] !== 0;
+    fsdEl.textContent = engaged ? 'Active' : 'Off';
+    fsdEl.className = engaged ? 'fsd-on' : 'fsd-off';
+  } else {
+    fsdSpan.style.display = 'none';
+  }
+}
+
+function cleanupReplay() {
+  stopReplay();
+  replayDrive = null;
+  replayMarker = null;
+  document.getElementById('replay-bar').classList.add('hidden');
 }
 
 // ─── Drive Info Panel ─────────────────────────────────────────────────────────
@@ -1126,9 +1373,9 @@ function showDriveInfo(drive) {
   const apRows = [];
   if ((drive.fsdPercent ?? 0) > 0) {
     const evts = [];
-    if (drive.fsdDisengagements > 0) evts.push(`${drive.fsdDisengagements} disengage`);
-    if (drive.fsdAccelPushes > 0) evts.push(`${drive.fsdAccelPushes} accel`);
-    apRows.push(`<div class="ap-row"><span class="ap-mode ap-fsd">FSD</span><span class="ap-pct">${drive.fsdPercent}%</span><span class="ap-dist">${fmt(drive.fsdDistanceMi.toFixed(1))} mi</span>${evts.length ? `<span class="ap-events">${evts.join(' · ')}</span>` : ''}</div>`);
+    if (drive.fsdDisengagements > 0) evts.push(`<span class="ap-evt-disengage">${drive.fsdDisengagements} disengagement${drive.fsdDisengagements !== 1 ? 's' : ''}</span>`);
+    if (drive.fsdAccelPushes > 0) evts.push(`<span class="ap-evt-accel">${drive.fsdAccelPushes} accelerator press${drive.fsdAccelPushes !== 1 ? 'es' : ''}</span>`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-fsd">FSD</span><span class="ap-pct">${drive.fsdPercent}%</span><span class="ap-dist">${fmt(drive.fsdDistanceMi.toFixed(1))} mi</span>${evts.length ? `<div class="ap-events">${evts.join('')}</div>` : ''}</div>`);
   }
   if ((drive.autosteerPercent ?? 0) > 0) {
     apRows.push(`<div class="ap-row"><span class="ap-mode ap-autosteer">AP</span><span class="ap-pct">${drive.autosteerPercent}%</span><span class="ap-dist">${fmt(drive.autosteerDistanceMi.toFixed(1))} mi</span></div>`);
