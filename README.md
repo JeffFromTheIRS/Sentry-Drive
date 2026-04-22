@@ -1,4 +1,4 @@
-# Sentry-Drive
+# Sentry Drive
 Sentry Drive is a desktop app for visualizing and analyzing your drive history. Meant to be used in conjunction with Sentry USB or TeslaUSB, you can track your self-driving stats, distance driven, drives made, etc. all on your computer! Simply point it to your TeslaCam folder and start processing. See every drive - where you used Full Self Driving, every intervention*, duration, average and max speed, and more!
 
 Running Sentry USB? You can import your drive data! Simply locate your drives-data.json and load it! If it's in your TeslaCam folder, it'll automatically locate and load it for you.
