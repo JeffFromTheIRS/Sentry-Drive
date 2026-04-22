@@ -157,8 +157,8 @@ ipcMain.handle('start-processing', async (_e, { clipsDir, outputDir, workerCount
   if (reprocessAll) args.push('--reprocess-all');
 
   try {
-    activeChild = spawn('node', args, {
-      env: { ...process.env },
+    activeChild = spawn(process.execPath, args, {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     });
   } catch (err) {
     return { success: false, error: `spawn failed: ${err.message}` };
