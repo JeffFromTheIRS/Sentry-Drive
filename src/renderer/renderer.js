@@ -26,6 +26,30 @@ let replayDrive = null;
 let replaySpeed = 1;        // 1x, 2x, 5x, 10x
 const REPLAY_BASE_MS = 100; // base interval per point at 1x
 
+// Units
+const UNIT_SYSTEM = {
+  imperial: {
+    dist:  { mult: 1,       short: 'mi',   long: 'Miles' },
+    speed: { mult: 1,       short: 'mph',  long: 'MPH' },
+  },
+  metric: {
+    dist:  { mult: 1.60934, short: 'km',   long: 'Kilometers' },
+    speed: { mult: 1.60934, short: 'km/h', long: 'KM/H' },
+  },
+};
+let unitSystem = localStorage.getItem('unitSystem') === 'metric' ? 'metric' : 'imperial';
+let lastDrivesMeta = null;
+
+function distVal(mi, decimals = 1) {
+  return (mi * UNIT_SYSTEM[unitSystem].dist.mult).toFixed(decimals);
+}
+function distShort() { return UNIT_SYSTEM[unitSystem].dist.short; }
+function distLong()  { return UNIT_SYSTEM[unitSystem].dist.long; }
+function speedVal(mph, decimals = 0) {
+  return (mph * UNIT_SYSTEM[unitSystem].speed.mult).toFixed(decimals);
+}
+function speedShort() { return UNIT_SYSTEM[unitSystem].speed.short; }
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
@@ -46,21 +70,45 @@ function initMap() {
     zoomControl: true,
   });
 
-  L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> ' +
-        'contributors &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>',
-      subdomains: 'abcd',
-      maxZoom: 19,
-    }
-  ).addTo(map);
+  const baseLayers = {
+    'Dark': L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> ' +
+          'contributors &copy; <a href="https://carto.com/attributions" target="_blank">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 19,
+      }
+    ),
+    'Google Maps': L.tileLayer(
+      'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+      { attribution: '&copy; Google', maxZoom: 20 }
+    ),
+    'Satellite': L.tileLayer(
+      'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+      { attribution: '&copy; Google', maxZoom: 20 }
+    ),
+  };
+
+  const savedLayer = localStorage.getItem('mapLayer');
+  const initialLayer = baseLayers[savedLayer] ? savedLayer : 'Dark';
+  baseLayers[initialLayer].addTo(map);
+
+  L.control.layers(baseLayers, null, { position: 'topright' }).addTo(map);
+  map.on('baselayerchange', (e) => localStorage.setItem('mapLayer', e.name));
+
+  // Let the replay controls / stats overlay receive clicks without Leaflet
+  // seeing them as map clicks (which would deselect the current drive).
+  const bottomOverlay = document.getElementById('map-overlay-bottom');
+  if (bottomOverlay) {
+    L.DomEvent.disableClickPropagation(bottomOverlay);
+    L.DomEvent.disableScrollPropagation(bottomOverlay);
+  }
 
   window.addEventListener('resize', () => map.invalidateSize());
 
   map.on('zoomend', updateLineWeights);
-  map.on('click', () => { if (selectedDriveId !== null) deselectDrive(); });
 
   document.getElementById('btn-back-overview').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -189,6 +237,7 @@ function initFooter() {
   hideChk.addEventListener('change', () => {
     hideOtherDrives = hideChk.checked;
     localStorage.setItem('hideOtherDrives', String(hideOtherDrives));
+    applyOtherDrivesVisibility();
   });
 
   // Auto-load drive data setting (default: true, preserve existing behavior for existing users)
@@ -198,12 +247,32 @@ function initFooter() {
     localStorage.setItem('autoLoadDriveData', String(autoLoadChk.checked));
   });
 
+  // Unit system toggle
+  const unitToggle = document.getElementById('unit-toggle');
+  const syncUnitToggleActive = () => {
+    unitToggle.querySelectorAll('.settings-segment-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.value === unitSystem);
+    });
+  };
+  syncUnitToggleActive();
+  unitToggle.addEventListener('click', (e) => {
+    const btn = e.target.closest('.settings-segment-btn');
+    if (!btn) return;
+    const next = btn.dataset.value;
+    if (next === unitSystem) return;
+    unitSystem = next;
+    localStorage.setItem('unitSystem', unitSystem);
+    syncUnitToggleActive();
+    refreshUnitDisplay();
+  });
+
   // Auto-check on launch
   window.electronAPI.checkForUpdate();
 }
 
 // ─── Changelog Modal ─────────────────────────────────────────────────────────
 const CHANGELOG_TYPE_ICONS = { feature: '✦', improvement: '↑', fix: '✓', note: '•' };
+const CHANGELOG_TYPE_LABELS = { feature: 'Feature', improvement: 'Improvement', fix: 'Fix', note: 'Note' };
 let changelogVersions = [];
 
 async function initChangelogModal() {
@@ -212,12 +281,10 @@ async function initChangelogModal() {
   const contentEl = document.getElementById('changelog-modal-content');
   const ghBtn = document.getElementById('btn-changelog-github');
   const dismissBtn = document.getElementById('btn-changelog-dismiss');
-  const closeBtn = document.getElementById('btn-changelog-close');
   const viewAllBtn = document.getElementById('btn-view-changelog');
 
   const close = () => overlay.classList.add('hidden');
   dismissBtn.addEventListener('click', close);
-  closeBtn.addEventListener('click', close);
   overlay.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) close();
   });
@@ -243,7 +310,6 @@ async function initChangelogModal() {
     contentEl.innerHTML = changelogVersions.map(renderChangelogEntry).join('');
     contentEl.scrollTop = 0;
     overlay.classList.remove('hidden');
-    document.getElementById('settings-overlay').classList.add('hidden');
   });
 
   const currentVersion = await window.electronAPI.getAppVersion();
@@ -294,8 +360,11 @@ function renderChangelogEntry(entry) {
         const type = CHANGELOG_TYPE_ICONS[c.type] ? c.type : 'note';
         return `
           <div class="changelog-item">
-            <span class="changelog-item-type ${type}">${CHANGELOG_TYPE_ICONS[type]}</span>
-            <span>${renderInline(c.description ?? '')}</span>
+            <span class="changelog-item-type ${type}">
+              <span class="changelog-item-type-icon">${CHANGELOG_TYPE_ICONS[type]}</span>
+              <span class="changelog-item-type-label">${CHANGELOG_TYPE_LABELS[type]}</span>
+            </span>
+            <span class="changelog-item-text">${renderInline(c.description ?? '')}</span>
           </div>
         `;
       }).join('')}</div>`
@@ -676,8 +745,38 @@ function fmtDuration(sec) {
 // ─── View Drives Tab ──────────────────────────────────────────────────────────
 function initViewDrivesTab() {
   document.getElementById('btn-load-drives').addEventListener('click', loadDrives);
-  document.getElementById('btn-repair-gps').addEventListener('click', repairGPS);
-  document.getElementById('btn-revert-gps').addEventListener('click', revertGPS);
+
+  const checkOverlay = document.getElementById('check-drives-overlay');
+  document.getElementById('btn-repair-gps').addEventListener('click', () => {
+    if (!loadedFilePath) return;
+    checkOverlay.classList.remove('hidden');
+  });
+  document.getElementById('btn-check-drives-confirm').addEventListener('click', () => {
+    checkOverlay.classList.add('hidden');
+    repairGPS();
+  });
+  document.getElementById('btn-check-drives-cancel').addEventListener('click', () => {
+    checkOverlay.classList.add('hidden');
+  });
+  checkOverlay.addEventListener('click', (e) => {
+    if (e.target === checkOverlay) checkOverlay.classList.add('hidden');
+  });
+
+  const revertOverlay = document.getElementById('revert-overlay');
+  document.getElementById('btn-revert-gps').addEventListener('click', () => {
+    if (!loadedFilePath) return;
+    revertOverlay.classList.remove('hidden');
+  });
+  document.getElementById('btn-revert-confirm').addEventListener('click', () => {
+    revertOverlay.classList.add('hidden');
+    revertGPS();
+  });
+  document.getElementById('btn-revert-cancel').addEventListener('click', () => {
+    revertOverlay.classList.add('hidden');
+  });
+  revertOverlay.addEventListener('click', (e) => {
+    if (e.target === revertOverlay) revertOverlay.classList.add('hidden');
+  });
 }
 
 async function updateRevertButton() {
@@ -692,9 +791,6 @@ async function updateRevertButton() {
 
 async function revertGPS() {
   if (!loadedFilePath) return;
-
-  const confirmed = confirm('Revert drive data to the backup created before the last Check Drives?\n\nThis will undo any GPS repairs and bridge routes.');
-  if (!confirmed) return;
 
   const result = await window.electronAPI.revertGPS(loadedFilePath);
   if (!result.success) {
@@ -845,7 +941,21 @@ async function loadDrives() {
   }
 }
 
+function refreshUnitDisplay() {
+  if (!drives.length) return;
+  if (lastDrivesMeta) renderDriveStats(drives, lastDrivesMeta);
+  renderDriveList(drives);
+  if (selectedDriveId !== null) {
+    const d = drives.find((x) => x.id === selectedDriveId);
+    if (d) {
+      selectedDriveId = null;
+      selectDrive(d);
+    }
+  }
+}
+
 function renderDriveStats(drives, meta) {
+  lastDrivesMeta = meta;
   const totalMi = drives.reduce((s, d) => s + d.distanceMi, 0);
   const totalMs = drives.reduce((s, d) => s + d.durationMs, 0);
   const totalHrs = Math.floor(totalMs / 3_600_000);
@@ -862,7 +972,7 @@ function renderDriveStats(drives, meta) {
   let html = `
     <div class="map-stat"><span class="map-stat-val">${fmt(drives.length)}</span><span class="map-stat-lbl">Drives</span></div>
     <div class="map-stat"><span class="map-stat-val">${fmt(clips)}</span><span class="map-stat-lbl">Clips</span></div>
-    <div class="map-stat"><span class="map-stat-val">${fmt(totalMi.toFixed(0))}</span><span class="map-stat-lbl">Miles</span></div>
+    <div class="map-stat"><span class="map-stat-val">${fmt(distVal(totalMi, 0))}</span><span class="map-stat-lbl">${distLong()}</span></div>
     <div class="map-stat"><span class="map-stat-val">${durStr}</span><span class="map-stat-lbl">Driven</span></div>
   `;
   if (fsdPct > 0) html += `<div class="map-stat"><span class="map-stat-val">${fsdPct}%</span><span class="map-stat-lbl">Full Self-Driving</span></div>`;
@@ -971,9 +1081,9 @@ function buildDriveItem(drive) {
       ${badge ?? ''}
     </div>
     <div class="drive-item-stats">
-      <span>${drive.distanceMi.toFixed(1)} mi</span>
+      <span>${distVal(drive.distanceMi)} ${distShort()}</span>
       <span>${durStr}</span>
-      <span>${drive.avgSpeedMph.toFixed(0)} mph</span>
+      <span>${speedVal(drive.avgSpeedMph)} ${speedShort()}</span>
     </div>
     ${disengageHtml}
     <div class="drive-item-tags">
@@ -1082,6 +1192,19 @@ function selectDrive(drive) {
   showDriveInfo(drive);
 }
 
+function applyOtherDrivesVisibility() {
+  if (selectedDriveId === null) return;
+  for (const layer of overviewLayers) {
+    if (layer._driveId === selectedDriveId) continue;
+    if (hideOtherDrives) {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+    } else {
+      if (!map.hasLayer(layer)) layer.addTo(map);
+      if (layer.setStyle) layer.setStyle({ color: '#555566', opacity: 1 });
+    }
+  }
+}
+
 function deselectDrive() {
   cleanupReplay();
   selectedDriveId = null;
@@ -1127,14 +1250,14 @@ function renderOverviewOnMap() {
   // Draw one polyline per drive with downsampled points for performance
   for (const drive of drives) {
     if (!drive.points || drive.points.length < 2) continue;
-    const lls = downsample(drive.points, 200).map((p) => [p[0], p[1]]);
+    const lls = downsample(drive.points, 500).map((p) => [p[0], p[1]]);
     allLatLngs.push(...lls);
 
     const line = L.polyline(lls, {
       color: '#3b82f6',
       weight: getWeight(2.5),
       opacity: 0.5,
-      smoothFactor: 1.5,
+      smoothFactor: 0.5,
     }).addTo(map);
     line._baseWeight = 2.5;
     line._driveId = drive.id;
@@ -1264,14 +1387,15 @@ function drawSelectedDrive(drive) {
     document.getElementById('map-legend').classList.add('hidden');
   }
 
-  // Add replay marker at start (navigation arrow, rotatable)
-  let initBearing = drive.points.length >= 2 ? smoothBearing(drive.points, 0, 5) : 0;
-  // If starting in reverse, flip bearing so arrow faces front of car
-  if (drive.gearStates && drive.gearStates[0] === 2) initBearing = (initBearing + 180) % 360;
+  // Add replay marker at start (navigation arrow, rotatable).
+  // Use the first point where the car is actually moving, not idx 0 — the
+  // earliest samples are often stationary parked GPS noise that gives a
+  // meaningless bearing.
+  const initBearing = computeInitBearing(drive.points, drive.gearStates);
   replayMarker = L.marker(latLngs[0], {
     icon: L.divIcon({
       className: '',
-      html: `<img id="replay-arrow" src="../../assets/arrow.png" style="width:128px;height:128px;transform:rotate(${initBearing}deg);transition:transform 0.1s linear;filter:drop-shadow(0 0 4px rgba(0,0,0,0.5));" />`,
+      html: `<img id="replay-arrow" src="../../assets/arrow.png" style="width:128px;height:128px;transform:rotate(${initBearing}deg);transition:transform 60ms linear;filter:drop-shadow(0 0 4px rgba(0,0,0,0.5));" />`,
       iconSize: [128, 128],
       iconAnchor: [64, 64],
     }),
@@ -1294,13 +1418,9 @@ function initReplay(drive) {
   replayIdx = 0;
   replaySpeed = 1;
   replayPlaying = false;
-  // Initialize bearing to actual starting direction (flip if starting in reverse)
-  if (drive.points.length >= 2) {
-    replayCurrentBearing = smoothBearing(drive.points, 0, 5);
-    if (drive.gearStates && drive.gearStates[0] === 2) replayCurrentBearing = (replayCurrentBearing + 180) % 360;
-  } else {
-    replayCurrentBearing = 0;
-  }
+  // Initialize bearing to the first point where the car is actually moving
+  // (matching the inline arrow transform set in drawSelectedDrive).
+  replayCurrentBearing = computeInitBearing(drive.points, drive.gearStates);
 
   const slider = document.getElementById('replay-slider');
   slider.max = String(drive.points.length - 1);
@@ -1408,28 +1528,43 @@ function updateReplayPosition(idx) {
     replayMarker.setLatLng([pt[0], pt[1]]);
   }
 
-  // Rotate arrow to face the direction the front of the car points
+  // Rotate arrow to face the direction the front of the car points.
   const arrow = document.getElementById('replay-arrow');
   if (arrow) {
-    let targetBearing = smoothBearing(pts, idx, 5);
+    // Skip the bearing update on gear-transition frames — the underlying
+    // points span a gear change and the computed bearing isn't reliable.
+    const gears = replayDrive.gearStates;
+    const gearNow = gears?.[idx];
+    const gearPrev = idx > 0 ? gears?.[idx - 1] : gearNow;
+    const gearNext = idx + 1 < gears?.length ? gears?.[idx + 1] : gearNow;
+    const gearTransition = (gearNow !== gearPrev) || (gearNow !== gearNext);
 
-    // When reversing, the car moves backward — flip bearing so arrow
-    // points where the front of the car faces, not the direction of travel
-    const isReversing = replayDrive.gearStates && replayDrive.gearStates[idx] === 2;
-    if (isReversing) targetBearing = (targetBearing + 180) % 360;
+    if (!gearTransition) {
+      // Gear-aware window-averaged bearing damps GPS jitter.
+      let bearing = smoothBearing(pts, idx, 7, gears);
 
-    // Shortest rotation path (avoid 359→1 spinning backwards)
-    let diff = targetBearing - replayCurrentBearing;
-    if (diff > 180) diff -= 360;
-    if (diff < -180) diff += 360;
-    // Lerp toward target to further dampen jitter
-    replayCurrentBearing += diff * 0.4;
+      if (gearNow === 2) bearing = (bearing + 180) % 360; // reverse → flip to front
 
-    arrow.style.transform = `rotate(${replayCurrentBearing}deg)`;
+      // Shortest-path tracking (Sentry-Studio approach): sign-preserving delta
+      // against the current winding avoids ±180 drift that would cumulate into
+      // a full 360° rotation.
+      let delta = bearing - (replayCurrentBearing % 360 + 360) % 360;
+      if (delta > 180) delta -= 360;
+      else if (delta < -180) delta += 360;
+      replayCurrentBearing += delta;
+
+      // Adaptive transition: longer at slow playback, shorter at high speeds.
+      const transMs = Math.max(30, 150 / replaySpeed);
+      arrow.style.transition = `transform ${transMs}ms linear`;
+      arrow.style.transform = `rotate(${replayCurrentBearing}deg)`;
+    }
   }
 
-  // Update slider
+  // Update slider and current-time label
   document.getElementById('replay-slider').value = String(idx);
+  if (pt && pt[2] !== undefined) {
+    document.getElementById('replay-time-current').textContent = formatReplayTime(pt[2]);
+  }
 
   // Update data display
   updateReplayData(idx);
@@ -1445,18 +1580,48 @@ function calcBearing(lat1, lon1, lat2, lon2) {
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
-function smoothBearing(pts, idx, window) {
-  // Average bearing over nearby point pairs to prevent jitter
+function computeInitBearing(pts, gearStates) {
+  if (!pts || pts.length < 2) return 0;
+  // Walk forward until we find the first pair of points with meaningful
+  // motion (≳10 cm). GPS jitter on parked samples is well under this.
+  const MIN_DELTA = 1e-6;
+  let startIdx = -1;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    if (Math.abs(pts[i + 1][0] - pts[i][0]) > MIN_DELTA ||
+        Math.abs(pts[i + 1][1] - pts[i][1]) > MIN_DELTA) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx < 0) return 0;
+  let bearing = smoothBearing(pts, startIdx, 7, gearStates);
+  if (gearStates?.[startIdx] === 2) bearing = (bearing + 180) % 360;
+  return bearing;
+}
+
+function smoothBearing(pts, idx, window, gearStates) {
+  // Average bearing over nearby point pairs to prevent jitter.
+  // Skip pairs that cross a gear-state boundary (reverse ↔ drive), since
+  // raw travel bearing flips 180° there and the circular mean collapses.
   const start = Math.max(0, idx - Math.floor(window / 2));
   const end = Math.min(pts.length - 1, idx + Math.ceil(window / 2));
-  let sinSum = 0, cosSum = 0, count = 0;
-  for (let i = start; i < end; i++) {
-    const b = calcBearing(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
-    const rad = (b * Math.PI) / 180;
-    sinSum += Math.sin(rad);
-    cosSum += Math.cos(rad);
-    count++;
-  }
+  const gear = gearStates ? gearStates[idx] : null;
+
+  const collect = (filterByGear) => {
+    let sinSum = 0, cosSum = 0, count = 0;
+    for (let i = start; i < end; i++) {
+      if (filterByGear && (gearStates[i] !== gear || gearStates[i + 1] !== gear)) continue;
+      const b = calcBearing(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+      const rad = (b * Math.PI) / 180;
+      sinSum += Math.sin(rad);
+      cosSum += Math.cos(rad);
+      count++;
+    }
+    return { sinSum, cosSum, count };
+  };
+
+  let { sinSum, cosSum, count } = gearStates ? collect(true) : collect(false);
+  if (count === 0 && gearStates) ({ sinSum, cosSum, count } = collect(false));
   if (count === 0) return 0;
   return ((Math.atan2(sinSum / count, cosSum / count) * 180) / Math.PI + 360) % 360;
 }
@@ -1467,8 +1632,8 @@ function updateReplayData(idx) {
   const pt = drive.points[idx];
 
   // Speed (pt[3] is m/s)
-  const speedMph = (pt[3] * 2.23694).toFixed(0);
-  document.getElementById('replay-speed-val').textContent = `${speedMph} mph`;
+  const mph = pt[3] * 2.23694;
+  document.getElementById('replay-speed-val').textContent = `${speedVal(mph)} ${speedShort()}`;
 
   // FSD
   const fsdEl = document.getElementById('replay-fsd-val');
@@ -1507,10 +1672,10 @@ function showDriveInfo(drive) {
       <span class="info-time">${startT} – ${endT}</span>
     </div>
     <div class="info-grid">
-      <div class="info-stat"><span class="info-val">${fmt(drive.distanceMi.toFixed(1))}</span><span class="info-unit">Miles</span></div>
+      <div class="info-stat"><span class="info-val">${fmt(distVal(drive.distanceMi))}</span><span class="info-unit">${distLong()}</span></div>
       <div class="info-stat"><span class="info-val">${durStr}</span><span class="info-unit">Duration</span></div>
-      <div class="info-stat"><span class="info-val">${drive.avgSpeedMph.toFixed(0)}</span><span class="info-unit">Avg MPH</span></div>
-      <div class="info-stat"><span class="info-val">${drive.maxSpeedMph.toFixed(0)}</span><span class="info-unit">Max MPH</span></div>
+      <div class="info-stat"><span class="info-val">${speedVal(drive.avgSpeedMph)}</span><span class="info-unit">Avg ${speedShort().toUpperCase()}</span></div>
+      <div class="info-stat"><span class="info-val">${speedVal(drive.maxSpeedMph)}</span><span class="info-unit">Max ${speedShort().toUpperCase()}</span></div>
     </div>
   `;
 
@@ -1519,13 +1684,13 @@ function showDriveInfo(drive) {
     const evts = [];
     if (drive.fsdDisengagements > 0) evts.push(`<span class="ap-evt-disengage">${drive.fsdDisengagements} disengagement${drive.fsdDisengagements !== 1 ? 's' : ''}</span>`);
     if (drive.fsdAccelPushes > 0) evts.push(`<span class="ap-evt-accel">${drive.fsdAccelPushes} accelerator press${drive.fsdAccelPushes !== 1 ? 'es' : ''}</span>`);
-    apRows.push(`<div class="ap-row"><span class="ap-mode ap-fsd">FSD</span><span class="ap-pct">${drive.fsdPercent}%</span><span class="ap-dist">${fmt(drive.fsdDistanceMi.toFixed(1))} mi</span>${evts.length ? `<div class="ap-events">${evts.join('')}</div>` : ''}</div>`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-fsd">FSD</span><span class="ap-pct">${drive.fsdPercent}%</span><span class="ap-dist">${fmt(distVal(drive.fsdDistanceMi))} ${distShort()}</span>${evts.length ? `<div class="ap-events">${evts.join('')}</div>` : ''}</div>`);
   }
   if ((drive.autosteerPercent ?? 0) > 0) {
-    apRows.push(`<div class="ap-row"><span class="ap-mode ap-autosteer">AP</span><span class="ap-pct">${drive.autosteerPercent}%</span><span class="ap-dist">${fmt(drive.autosteerDistanceMi.toFixed(1))} mi</span></div>`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-autosteer">AP</span><span class="ap-pct">${drive.autosteerPercent}%</span><span class="ap-dist">${fmt(distVal(drive.autosteerDistanceMi))} ${distShort()}</span></div>`);
   }
   if ((drive.taccPercent ?? 0) > 0) {
-    apRows.push(`<div class="ap-row"><span class="ap-mode ap-tacc">TACC</span><span class="ap-pct">${drive.taccPercent}%</span><span class="ap-dist">${fmt(drive.taccDistanceMi.toFixed(1))} mi</span></div>`);
+    apRows.push(`<div class="ap-row"><span class="ap-mode ap-tacc">TACC</span><span class="ap-pct">${drive.taccPercent}%</span><span class="ap-dist">${fmt(distVal(drive.taccDistanceMi))} ${distShort()}</span></div>`);
   }
   if (apRows.length) html += `<div class="info-ap">${apRows.join('')}</div>`;
 

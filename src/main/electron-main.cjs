@@ -9,6 +9,38 @@ const fs = require('fs');
 let mainWindow;
 let activeChild = null;
 
+// ─── Window State Persistence ────────────────────────────────────────────────
+const WINDOW_STATE_FILE = () => path.join(app.getPath('userData'), 'window-state.json');
+const DEFAULT_WINDOW_STATE = { width: 1440, height: 900, isMaximized: false, isFullScreen: false };
+
+function loadWindowState() {
+  try {
+    const raw = fs.readFileSync(WINDOW_STATE_FILE(), 'utf-8');
+    return { ...DEFAULT_WINDOW_STATE, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_WINDOW_STATE };
+  }
+}
+
+function saveWindowState() {
+  if (!mainWindow) return;
+  try {
+    const isMaximized = mainWindow.isMaximized();
+    const isFullScreen = mainWindow.isFullScreen();
+    // When maximized/fullscreen, getBounds() returns the fullscreen rect, which
+    // isn't useful as a restore size. Prefer getNormalBounds() (Electron ≥ 12).
+    const bounds = isMaximized || isFullScreen
+      ? (mainWindow.getNormalBounds?.() ?? mainWindow.getBounds())
+      : mainWindow.getBounds();
+    fs.writeFileSync(
+      WINDOW_STATE_FILE(),
+      JSON.stringify({ ...bounds, isMaximized, isFullScreen }, null, 2),
+    );
+  } catch {
+    // Best-effort; losing the file on next launch just reverts to defaults.
+  }
+}
+
 // ─── Auto-Updater Setup ─────────────────────────────────────────────────────
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
@@ -25,9 +57,12 @@ autoUpdater.on('update-downloaded', () => sendUpdateStatus('ready'));
 autoUpdater.on('error', (err) => sendUpdateStatus('error', { message: err.message }));
 
 function createWindow() {
+  const state = loadWindowState();
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: state.width,
+    height: state.height,
+    x: state.x,
+    y: state.y,
     minWidth: 1050,
     minHeight: 650,
     backgroundColor: '#0a0a0f',
@@ -37,6 +72,22 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
     },
+  });
+
+  if (state.isMaximized) mainWindow.maximize();
+  if (state.isFullScreen) mainWindow.setFullScreen(true);
+
+  mainWindow.on('close', saveWindowState);
+
+  // DevTools shortcuts (application menu is disabled, so wire them here).
+  mainWindow.webContents.on('before-input-event', (_e, input) => {
+    if (input.type !== 'keyDown') return;
+    const key = input.key?.toLowerCase();
+    if (key === 'f12' || (input.control && input.shift && key === 'i')) {
+      mainWindow.webContents.toggleDevTools();
+    } else if ((input.control || input.meta) && key === 'r') {
+      mainWindow.webContents.reload();
+    }
   });
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));

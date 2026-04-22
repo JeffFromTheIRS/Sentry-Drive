@@ -1,6 +1,24 @@
 {
   "versions": [
     {
+      "version": "1.1.0-beta.3",
+      "date": "2026-04-22",
+      "title": "Map Layers, Units, and Polish",
+      "changes": [
+        { "type": "feature", "description": "Added Google Maps and Satellite base layers — switch from the new layer control in the top-right of the map." },
+        { "type": "feature", "description": "Imperial / Metric unit toggle in Settings." },
+        { "type": "improvement", "description": "Window size and maximized state are remembered across launches." },
+        { "type": "improvement", "description": "Relocated drive timeline to above the overall drive stats." },
+        { "type": "improvement", "description": "Added confirmation checks to Check Drives and Revert Drives buttons to avoid accidental triggers." },
+        { "type": "improvement", "description": "Settings restyled — toggle pills, compact Imperial/Metric switch." },
+        { "type": "improvement", "description": "Overview drive lines are now smoothed out." },
+        { "type": "fix", "description": "Fixed bug related to Play/Pause button not working." },
+        { "type": "fix", "description": "Arrow no longer spins full circles at certain points or when switching between drive and reverse." },
+        { "type": "fix", "description": "Clicking on the map while viewing a specific drive no longer kicks you back to the overview." },
+        { "type": "fix", "description": "Dismissing the Change Log modal no longer also closes the Settings modal behind it." }
+      ]
+    },
+    {
       "version": "1.1.0-beta.2",
       "date": "2026-04-22",
       "title": "Processing Fix",

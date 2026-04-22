@@ -8,8 +8,8 @@
     script-src 'self' https://unpkg.com;
     style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com;
     font-src https://fonts.gstatic.com;
-    img-src 'self' data: blob: https://unpkg.com https://*.basemaps.cartocdn.com https://*.openstreetmap.org;
-    connect-src https://*.basemaps.cartocdn.com https://unpkg.com;
+    img-src 'self' data: blob: https://unpkg.com https://*.basemaps.cartocdn.com https://*.openstreetmap.org https://*.google.com;
+    connect-src https://*.basemaps.cartocdn.com https://*.google.com https://unpkg.com;
   " />
   <title>Sentry Drive</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700;800&display=swap" />
@@ -40,7 +40,7 @@
           <label class="field-label">Clips Directory</label>
           <div class="input-row">
             <input id="clips-dir" type="text" class="text-input" placeholder="Z:\RecentClips" />
-            <button id="browse-clips" class="btn-icon" title="Browse">&#128193;</button>
+            <button id="browse-clips" class="btn-icon" title="Browse"><span class="material-icons">folder_open</span></button>
           </div>
         </div>
 
@@ -48,7 +48,7 @@
           <label class="field-label">Output Directory</label>
           <div class="input-row">
             <input id="output-path" type="text" class="text-input" placeholder="Select output directory..." />
-            <button id="browse-output" class="btn-icon" title="Browse">&#128193;</button>
+            <button id="browse-output" class="btn-icon" title="Browse"><span class="material-icons">folder_open</span></button>
           </div>
         </div>
 
@@ -86,10 +86,10 @@
       <!-- View Drives Tab -->
       <div id="tab-drives" class="tab-pane">
 
-        <button id="btn-load-drives" class="btn-primary">Load Drives</button>
+        <button id="btn-load-drives" class="btn-primary"><span class="material-icons">folder_open</span>Load Drives</button>
         <div class="btn-row">
-          <button id="btn-repair-gps" class="btn-primary btn-secondary" disabled>Check Drives</button>
-          <button id="btn-revert-gps" class="btn-danger" disabled>Revert</button>
+          <button id="btn-repair-gps" class="btn-primary btn-secondary" disabled><span class="material-icons">build</span>Check Drives</button>
+          <button id="btn-revert-gps" class="btn-danger" disabled><span class="material-icons">undo</span>Revert</button>
         </div>
 
         <div id="repair-progress" class="hidden">
@@ -104,22 +104,6 @@
         <div id="tag-filter" class="hidden"></div>
 
         <div id="drive-info-panel" class="hidden"></div>
-
-        <div id="replay-bar" class="hidden">
-          <div class="replay-controls">
-            <button id="btn-replay-play" class="replay-play-btn" title="Play">
-              <span class="material-icons" id="replay-play-icon">play_arrow</span>
-            </button>
-            <span id="replay-time-start" class="replay-time">--:--</span>
-            <input type="range" id="replay-slider" class="replay-slider" min="0" max="0" value="0" />
-            <span id="replay-time-end" class="replay-time">--:--</span>
-            <button id="btn-replay-speed" class="replay-speed-btn" title="Playback speed">1x</button>
-          </div>
-          <div id="replay-data" class="replay-data">
-            <span>Speed: <strong id="replay-speed-val">--</strong></span>
-            <span id="replay-fsd-span">FSD: <strong id="replay-fsd-val">--</strong></span>
-          </div>
-        </div>
 
         <div id="drives-list"></div>
 
@@ -162,16 +146,23 @@
             <div class="settings-section-title">General</div>
             <div class="settings-divider"></div>
             <label class="settings-checkbox-row">
+              <span class="settings-checkbox-label">Load Drive Data on Start</span>
               <input type="checkbox" id="chk-autoload-drive-data" class="settings-checkbox" />
-              <span class="settings-checkbox-label">Load drive-data.json on launch</span>
             </label>
+            <div class="settings-row">
+              <span class="settings-row-label">Units</span>
+              <div class="settings-segment" id="unit-toggle" role="radiogroup" aria-label="Units">
+                <button type="button" class="settings-segment-btn" data-value="imperial" role="radio">Imperial</button>
+                <button type="button" class="settings-segment-btn" data-value="metric" role="radio">Metric</button>
+              </div>
+            </div>
           </div>
           <div class="settings-section" style="margin-top: 16px;">
             <div class="settings-section-title">Map</div>
             <div class="settings-divider"></div>
             <label class="settings-checkbox-row">
-              <input type="checkbox" id="chk-hide-other-drives" class="settings-checkbox" />
               <span class="settings-checkbox-label">Hide other drives when viewing a drive</span>
+              <input type="checkbox" id="chk-hide-other-drives" class="settings-checkbox" />
             </label>
           </div>
           <div class="settings-section" style="margin-top: 16px;">
@@ -182,8 +173,8 @@
               <span id="settings-update-msg" class="hidden"></span>
             </div>
             <label class="settings-checkbox-row">
-              <input type="checkbox" id="chk-beta" class="settings-checkbox" />
               <span class="settings-checkbox-label">Enroll in Beta</span>
+              <input type="checkbox" id="chk-beta" class="settings-checkbox" />
             </label>
             <div id="beta-warning" class="beta-warning hidden">Beta releases may be unstable. Use at your own risk.</div>
             <button id="btn-check-update" class="btn-primary btn-update-full">Check for Update</button>
@@ -195,10 +186,10 @@
 
     <!-- ── Reprocess-All Confirm Modal ─────────────────────────────── -->
     <div id="reprocess-overlay" class="hidden">
-      <div id="reprocess-modal">
+      <div class="reprocess-modal">
         <div class="reprocess-modal-icon"><span class="material-icons">autorenew</span></div>
         <div class="reprocess-modal-title">Reprocess All Drives?</div>
-        <div id="reprocess-modal-msg">
+        <div class="reprocess-modal-msg">
           This will re-extract GPS and metadata from every clip in your clips directory. It can take a long time for large libraries. Your drive tags will be preserved.
         </div>
         <div class="reprocess-modal-actions">
@@ -208,10 +199,40 @@
       </div>
     </div>
 
+    <!-- ── Check Drives Confirm Modal ──────────────────────────────── -->
+    <div id="check-drives-overlay" class="hidden">
+      <div class="reprocess-modal">
+        <div class="reprocess-modal-icon"><span class="material-icons">build</span></div>
+        <div class="reprocess-modal-title">Check Drives?</div>
+        <div class="reprocess-modal-msg">
+          This scans for GPS gaps and bridges missing segments. A backup of your current drive data is written first (.bak), so you can revert if needed.
+        </div>
+        <div class="reprocess-modal-actions">
+          <button id="btn-check-drives-confirm" class="btn-primary btn-update-full">Check Drives</button>
+          <button id="btn-check-drives-cancel" class="update-skip-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Revert Confirm Modal ────────────────────────────────────── -->
+    <div id="revert-overlay" class="hidden">
+      <div class="reprocess-modal">
+        <div class="reprocess-modal-icon"><span class="material-icons">undo</span></div>
+        <div class="reprocess-modal-title">Revert to Backup?</div>
+        <div class="reprocess-modal-msg">
+          This restores drive data from the backup created before the last Check Drives. Any GPS repairs and bridge routes will be removed.
+        </div>
+        <div class="reprocess-modal-actions">
+          <button id="btn-revert-confirm" class="btn-danger btn-update-full">Revert</button>
+          <button id="btn-revert-cancel" class="update-skip-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Update Modal ───────────────────────────────────────────── -->
     <div id="update-overlay" class="hidden">
       <div id="update-modal">
-        <div class="update-modal-icon"><span class="material-icons">system_update</span></div>
+        <div class="update-modal-icon"><span class="material-icons">download</span></div>
         <div class="update-modal-title">Update Available</div>
         <div id="update-modal-msg">A new version is available.</div>
         <div class="update-modal-actions">
@@ -232,7 +253,6 @@
             <line x1="16" y1="17" x2="8" y2="17"/>
           </svg>
           <h2 id="changelog-modal-title">What's New</h2>
-          <button id="btn-changelog-close" class="changelog-modal-close" aria-label="Close">&times;</button>
         </div>
         <div class="changelog-modal-body">
           <div class="changelog-section">
@@ -241,7 +261,7 @@
         </div>
         <div class="changelog-modal-footer">
           <button id="btn-changelog-github" class="update-skip-btn">View on GitHub</button>
-          <button id="btn-changelog-dismiss" class="btn-primary btn-update-full">Got it</button>
+          <button id="btn-changelog-dismiss" class="btn-primary btn-update-full">Close</button>
         </div>
       </div>
     </div>
@@ -256,7 +276,25 @@
         </div>
       </div>
       <button id="btn-back-overview" class="hidden"><span class="material-icons">arrow_back</span></button>
-      <div id="map-stats" class="hidden"></div>
+      <div id="map-overlay-bottom">
+        <div id="replay-bar" class="hidden">
+          <div id="replay-time-current" class="replay-time-current">--:--</div>
+          <div class="replay-controls">
+            <button id="btn-replay-play" class="replay-play-btn" title="Play">
+              <span class="material-icons" id="replay-play-icon">play_arrow</span>
+            </button>
+            <span id="replay-time-start" class="replay-time">--:--</span>
+            <input type="range" id="replay-slider" class="replay-slider" min="0" max="0" value="0" />
+            <span id="replay-time-end" class="replay-time">--:--</span>
+            <button id="btn-replay-speed" class="replay-speed-btn" title="Playback speed">1x</button>
+          </div>
+          <div id="replay-data" class="replay-data">
+            <span>Speed: <strong id="replay-speed-val">--</strong></span>
+            <span id="replay-fsd-span">FSD: <strong id="replay-fsd-val">--</strong></span>
+          </div>
+        </div>
+        <div id="map-stats" class="hidden"></div>
+      </div>
       <div id="map-legend" class="hidden">
         <span class="legend-item"><span class="legend-swatch fsd-on"></span>Full Self-Driving</span>
         <span class="legend-item"><span class="legend-swatch fsd-off"></span>Manual</span>

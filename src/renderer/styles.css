@@ -223,7 +223,10 @@ html, body {
 .btn-primary .material-icons,
 .btn-danger .material-icons { font-size: 16px; }
 
-#btn-stop .material-icons { font-variation-settings: 'FILL' 1; }
+#btn-stop .material-icons,
+#btn-process-new .material-icons,
+#btn-repair-gps .material-icons { font-variation-settings: 'FILL' 1; }
+.footer-gear { font-variation-settings: 'FILL' 1; }
 
 /* Inside a btn-row, buttons split the space equally */
 .btn-row .btn-primary,
@@ -844,13 +847,61 @@ html, body {
   border-color: var(--accent);
 }
 
-/* ── Map Stats Overlay ──────────────────────────────────────────────────── */
-#map-stats {
+/* ── Leaflet Layer Control (dark theme override) ───────────────────────── */
+.leaflet-control-layers {
+  background: rgba(8, 8, 16, 0.75) !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text) !important;
+}
+.leaflet-control-layers-toggle {
+  filter: invert(0.9) hue-rotate(180deg);
+}
+.leaflet-control-layers-expanded {
+  padding: 10px 12px !important;
+}
+.leaflet-control-layers-expanded .leaflet-control-layers-toggle { display: none; }
+.leaflet-control-layers-base label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  margin: 2px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.leaflet-control-layers-base label input { display: none; }
+.leaflet-control-layers-base label > span { padding-left: 0 !important; }
+.leaflet-control-layers-base label:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.leaflet-control-layers-base label:has(input:checked) {
+  background: var(--blue);
+  color: #fff;
+}
+.leaflet-control-layers-separator { border-top: 1px solid var(--border-light) !important; }
+
+/* ── Map Bottom Overlay (replay bar + stats, stacked) ───────────────────── */
+#map-overlay-bottom {
   position: absolute;
   bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  max-width: calc(100% - 28px);
+}
+
+/* ── Map Stats Overlay ──────────────────────────────────────────────────── */
+#map-stats {
   background: rgba(8, 8, 16, 0.75);
   border: 1px solid var(--border-light);
   border-radius: 8px;
@@ -886,10 +937,15 @@ html, body {
 
 /* ── Replay Controls ───────────────────────────────────────────────────── */
 #replay-bar {
-  background: var(--drive-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
+  background: rgba(8, 8, 16, 0.75);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 10px 14px;
+  width: 640px;
+  max-width: 100%;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: auto;
   flex-shrink: 0;
 }
 
@@ -924,6 +980,16 @@ html, body {
   color: var(--text-dim);
   min-width: 44px;
   flex-shrink: 0;
+}
+
+.replay-time-current {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
 }
 
 .replay-slider {
@@ -1188,47 +1254,52 @@ html, body {
   font-size: 13px;
 }
 
-/* ── Beta Checkbox ─────────────────────────────────────────────────────── */
-.settings-checkbox-row {
+/* ── Settings Rows (toggle pill) ───────────────────────────────────────── */
+.settings-checkbox-row,
+.settings-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   cursor: pointer;
+  margin-top: 8px;
 }
+.settings-checkbox-row:first-child,
+.settings-section > .settings-row:first-of-type { margin-top: 0; }
 
 .settings-checkbox {
   appearance: none;
   -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--border-light);
-  border-radius: 3px;
-  background: var(--input-bg);
+  width: 34px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  background: var(--border-light);
   cursor: pointer;
   flex-shrink: 0;
   position: relative;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.2s;
 }
-.settings-checkbox:checked {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.settings-checkbox:checked::after {
+.settings-checkbox::after {
   content: '';
   position: absolute;
-  left: 4.5px;
-  top: 1.5px;
-  width: 4px;
-  height: 8px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
 }
-.settings-checkbox:hover {
-  border-color: var(--accent);
+.settings-checkbox:checked {
+  background: var(--blue);
+}
+.settings-checkbox:checked::after {
+  transform: translateX(14px);
 }
 
-.settings-checkbox-label {
+.settings-checkbox-label,
+.settings-row-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
@@ -1244,8 +1315,10 @@ html, body {
   border: 1px solid rgba(255, 170, 0, 0.15);
 }
 
-/* ── Reprocess-All Confirm Modal ───────────────────────────────────────── */
-#reprocess-overlay {
+/* ── Reprocess-All / Check Drives / Revert Confirm Modals ─────────────── */
+#reprocess-overlay,
+#check-drives-overlay,
+#revert-overlay {
   position: fixed;
   inset: 0;
   z-index: 9500;
@@ -1257,7 +1330,7 @@ html, body {
   -webkit-backdrop-filter: blur(6px);
 }
 
-#reprocess-modal {
+.reprocess-modal {
   width: 360px;
   background: var(--panel-bg);
   border: 1px solid var(--border-light);
@@ -1289,7 +1362,7 @@ html, body {
   color: var(--text);
 }
 
-#reprocess-modal-msg {
+.reprocess-modal-msg {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.5;
@@ -1333,7 +1406,7 @@ html, body {
 .update-modal-icon {
   width: 48px;
   height: 48px;
-  border-radius: 50%;
+  border-radius: 10px;
   background: rgba(29, 233, 160, 0.12);
   display: flex;
   align-items: center;
@@ -1387,10 +1460,39 @@ html, body {
   margin-top: 8px;
 }
 
+.settings-segment {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--drive-hover);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+}
+
+.settings-segment-btn {
+  padding: 5px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  outline: none;
+}
+
+.settings-segment-btn:hover:not(.active) {
+  color: var(--text);
+}
+
+.settings-segment-btn.active {
+  background: var(--blue);
+  color: #fff;
+}
+
 /* ── Changelog Modal ───────────────────────────────────────────────────── */
 #changelog-overlay {
-  --changelog-accent: var(--success);
-  --changelog-accent-soft: rgba(29, 233, 160, 0.15);
   position: fixed;
   inset: 0;
   z-index: 9600;
@@ -1403,85 +1505,62 @@ html, body {
 }
 
 #changelog-modal {
-  width: 560px;
+  width: 480px;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 80px);
   background: var(--panel-bg);
   border: 1px solid var(--border-light);
-  border-radius: 24px;
+  border-radius: 12px;
+  padding: 24px 24px 20px;
   display: flex;
   flex-direction: column;
+  gap: 14px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
   overflow: hidden;
 }
 
 .changelog-modal-header {
-  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 18px 22px;
-}
-
-.changelog-modal-header::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 22px;
-  right: 22px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent 0%, var(--changelog-accent) 50%, transparent 100%);
-  opacity: 0.5;
+  gap: 12px;
 }
 
 .changelog-modal-header svg {
-  color: var(--changelog-accent);
+  color: var(--blue);
   flex-shrink: 0;
 }
 
 .changelog-modal-header h2 {
   flex: 1;
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
 }
 
-.changelog-modal-close {
-  width: 26px;
-  height: 26px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 20px;
-  line-height: 1;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.changelog-modal-close:hover {
-  background: var(--changelog-accent-soft);
-  color: var(--changelog-accent);
-}
-
 .changelog-modal-body {
-  padding: 16px 22px;
+  flex: 1;
+  min-height: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-light);
 }
 
 .changelog-section {
-  background: var(--drive-hover);
-  border-radius: 10px;
-  overflow: hidden;
+  background: transparent;
 }
 
 .changelog-content {
-  max-height: 450px;
+  max-height: 440px;
   overflow-y: auto;
-  padding: 14px;
+  padding: 8px 2px 4px 2px;
 }
 
 .changelog-version { margin-bottom: 16px; }
 .changelog-version:last-child { margin-bottom: 0; }
+.changelog-version + .changelog-version {
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
+}
 
 .changelog-version-header {
   display: flex;
@@ -1524,7 +1603,7 @@ html, body {
 }
 .changelog-description p { margin: 0 0 6px; }
 .changelog-description p:last-child { margin-bottom: 0; }
-.changelog-description a { color: var(--success); text-decoration: none; }
+.changelog-description a { color: var(--blue-light); text-decoration: none; }
 .changelog-description a:hover { text-decoration: underline; }
 .changelog-description code {
   background: rgba(255, 255, 255, 0.06);
@@ -1548,7 +1627,7 @@ html, body {
   color: var(--text-muted);
   line-height: 1.4;
 }
-.changelog-item a { color: var(--success); text-decoration: none; }
+.changelog-item a { color: var(--blue-light); text-decoration: none; }
 .changelog-item a:hover { text-decoration: underline; }
 .changelog-item code {
   background: rgba(255, 255, 255, 0.06);
@@ -1561,14 +1640,26 @@ html, body {
 .changelog-item-type {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
+  gap: 4px;
+  padding: 2px 7px;
   border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
   flex-shrink: 0;
   margin-top: 1px;
+  min-width: 108px;
+  justify-content: flex-start;
+}
+
+.changelog-item-type-icon {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.changelog-item-type-label {
+  line-height: 1;
 }
 .changelog-item-type.feature     { background: rgba(33, 150, 243, 0.25); color: #64b5f6; }
 .changelog-item-type.improvement { background: rgba(156, 39, 176, 0.25); color: #ba68c8; }
@@ -1583,11 +1674,12 @@ html, body {
 }
 
 .changelog-modal-footer {
-  padding: 14px 22px;
-  background: rgba(0, 0, 0, 0.25);
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-light);
+  margin-top: 2px;
 }
 .changelog-modal-footer .update-skip-btn,
 .changelog-modal-footer .btn-update-full {
