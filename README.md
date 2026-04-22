@@ -4,7 +4,7 @@ Sentry Drive is a desktop app for visualizing and analyzing your drive history. 
 Running Sentry USB? You can import your drive data! Simply locate your drives-data.json and load it! If it's in your TeslaCam folder, it'll automatically locate and load it for you.
 
 And in the event you're missing data due to missing or corrupted footage, the Check Drives feature attempts to bridge that gap using OpenStreetMaps's routing API to ensure you have a completed route.
-**Note:** _Feature is currently in ALPHA and may not work as expected. Bridged gaps will appear as manual._
+<br> **Note:** _Feature is currently in ALPHA and may not work as expected. Bridged gaps will appear as manual._
 
 
 
@@ -12,4 +12,4 @@ And in the event you're missing data due to missing or corrupted footage, the Ch
 
 Currently, this app is only available on Windows.
 
-Originally created by [Scottmg1](https://github.com/Scottmg1), derived from his Sentry USB project. UI made with the help of Claude.
+Originally created by [Scottmg1](https://github.com/Scottmg1), derived from his [Sentry USB project](https://github.com/Scottmg1/Sentry-USB). UI made with the help of Claude.
