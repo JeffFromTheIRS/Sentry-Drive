@@ -15,4 +15,5 @@ And in the event you're missing data due to missing or corrupted footage, the Ch
 ## Platforms
 Currently, this app is only available on Windows. [Check the releases tab](https://github.com/JeffFromTheIRS/Sentry-Drive/releases) for the latest version.
 
+## Credits
 Originally created by [Scottmg1](https://github.com/Scottmg1), derived from his [Sentry USB project](https://github.com/Scottmg1/Sentry-USB). UI made with the help of Claude.
