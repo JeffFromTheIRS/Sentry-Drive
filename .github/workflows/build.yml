@@ -9,7 +9,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout code
@@ -31,11 +35,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         run: npx electron-builder --win --publish never
 
-      - name: Upload assets to release
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac --publish never
+
+      - name: Upload assets (Windows)
+        if: runner.os == 'Windows'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.exe dist/*.yml --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.exe dist/latest.yml --clobber
+
+      - name: Upload assets (macOS)
+        if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/*.dmg dist/latest-mac.yml --clobber
