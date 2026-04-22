@@ -136,13 +136,14 @@ ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
   }
 });
 
-ipcMain.handle('start-processing', async (_e, { clipsDir, outputDir, workerCount }) => {
+ipcMain.handle('start-processing', async (_e, { clipsDir, outputDir, workerCount, reprocessAll }) => {
   if (activeChild) return { success: false, error: 'Processing already running' };
 
   const scriptPath = path.join(__dirname, '..', 'processing', 'process.js');
   const outputPath = path.join(outputDir, 'drive-data.json');
   const args = [scriptPath, clipsDir, outputPath];
   if (workerCount && workerCount > 0) args.push(String(workerCount));
+  if (reprocessAll) args.push('--reprocess-all');
 
   try {
     activeChild = spawn('node', args, {

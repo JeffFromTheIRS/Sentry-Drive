@@ -190,6 +190,13 @@ function initFooter() {
     localStorage.setItem('hideOtherDrives', String(hideOtherDrives));
   });
 
+  // Auto-load drive data setting (default: true, preserve existing behavior for existing users)
+  const autoLoadChk = document.getElementById('chk-autoload-drive-data');
+  autoLoadChk.checked = localStorage.getItem('autoLoadDriveData') !== 'false';
+  autoLoadChk.addEventListener('change', () => {
+    localStorage.setItem('autoLoadDriveData', String(autoLoadChk.checked));
+  });
+
   // Auto-check on launch
   window.electronAPI.checkForUpdate();
 }
@@ -322,7 +329,22 @@ function initProcessingTab() {
     }
   });
 
-  document.getElementById('btn-start').addEventListener('click', startProcessing);
+  const reprocessOverlay = document.getElementById('reprocess-overlay');
+  document.getElementById('btn-reprocess-all').addEventListener('click', () => {
+    reprocessOverlay.classList.remove('hidden');
+  });
+  document.getElementById('btn-reprocess-confirm').addEventListener('click', () => {
+    reprocessOverlay.classList.add('hidden');
+    startProcessing({ reprocessAll: true });
+  });
+  document.getElementById('btn-reprocess-cancel').addEventListener('click', () => {
+    reprocessOverlay.classList.add('hidden');
+  });
+  reprocessOverlay.addEventListener('click', (e) => {
+    if (e.target === reprocessOverlay) reprocessOverlay.classList.add('hidden');
+  });
+
+  document.getElementById('btn-process-new').addEventListener('click', () => startProcessing({ reprocessAll: false }));
   document.getElementById('btn-stop').addEventListener('click', stopProcessing);
 
   // Worker slider
@@ -352,15 +374,17 @@ async function loadDefaultPaths() {
     outputInput.value = defaultDir;
   }
 
-  // Auto-load drive-data if we have a saved path or can find one in the output dir
-  const savedDriveData = localStorage.getItem('lastDriveDataPath');
-  if (savedDriveData) {
-    await autoLoadDriveData(savedDriveData);
-  } else {
-    const clipsDir = document.getElementById('clips-dir').value;
-    if (clipsDir) {
-      const found = await window.electronAPI.findDriveData(clipsDir);
-      if (found) await autoLoadDriveData(found);
+  // Auto-load drive-data if enabled (default: true) and we have a saved path or can find one in the output dir
+  if (localStorage.getItem('autoLoadDriveData') !== 'false') {
+    const savedDriveData = localStorage.getItem('lastDriveDataPath');
+    if (savedDriveData) {
+      await autoLoadDriveData(savedDriveData);
+    } else {
+      const clipsDir = document.getElementById('clips-dir').value;
+      if (clipsDir) {
+        const found = await window.electronAPI.findDriveData(clipsDir);
+        if (found) await autoLoadDriveData(found);
+      }
     }
   }
 }
@@ -396,7 +420,7 @@ async function autoLoadDriveData(filePath) {
   hideLoading();
 }
 
-async function startProcessing() {
+async function startProcessing({ reprocessAll = false } = {}) {
   const clipsDir   = document.getElementById('clips-dir').value.trim();
   const outputDir  = document.getElementById('output-path').value.trim();
 
@@ -407,7 +431,14 @@ async function startProcessing() {
 
   // Check whether drive-data.json already exists in the output directory
   const exists = await window.electronAPI.checkDriveData(outputDir);
-  if (exists) {
+  if (reprocessAll) {
+    appendLogLine(
+      exists
+        ? 'Reprocessing all drives — existing routes will be rebuilt from scratch (drive tags preserved).'
+        : 'Reprocessing all drives — no existing drive-data.json found, starting fresh.',
+      'warn',
+    );
+  } else if (exists) {
     appendLogLine('Found existing drive-data.json — new clips will be added incrementally.', 'warn');
   } else {
     appendLogLine('No existing drive-data.json — starting fresh.', 'normal');
@@ -435,7 +466,7 @@ async function startProcessing() {
     }
   });
 
-  const result = await window.electronAPI.startProcessing({ clipsDir, outputDir, workerCount });
+  const result = await window.electronAPI.startProcessing({ clipsDir, outputDir, workerCount, reprocessAll });
   if (!result.success && result.error) {
     appendLogLine(`Failed to start: ${result.error}`, 'error');
     onProcessingDone(-1);
@@ -467,7 +498,8 @@ function onProcessingDone(code) {
 }
 
 function setProcessingButtons(running) {
-  document.getElementById('btn-start').disabled = running;
+  document.getElementById('btn-reprocess-all').disabled = running;
+  document.getElementById('btn-process-new').disabled = running;
   document.getElementById('btn-stop').disabled = !running;
 }
 

@@ -13,10 +13,14 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const CLIPS_DIR = process.argv[2] || "Z:\\RecentClips";
-const OUTPUT_PATH = process.argv[3] || path.join(__dirname, "..", "..", "drive-data.json");
-const NUM_WORKERS = process.argv[4]
-  ? Math.max(1, parseInt(process.argv[4], 10))
+const rawArgs = process.argv.slice(2);
+const REPROCESS_ALL = rawArgs.includes("--reprocess-all");
+const positional = rawArgs.filter((a) => !a.startsWith("--"));
+
+const CLIPS_DIR = positional[0] || "Z:\\RecentClips";
+const OUTPUT_PATH = positional[1] || path.join(__dirname, "..", "..", "drive-data.json");
+const NUM_WORKERS = positional[2]
+  ? Math.max(1, parseInt(positional[2], 10))
   : Math.max(1, os.cpus().length - 1);
 
 // Only process clips on or after this date (YYYY-MM-DD, inclusive).
@@ -138,12 +142,21 @@ async function main() {
   console.log(`Cutoff: ${CUTOFF_DATE} (front camera only)`);
   console.log();
 
-  // Load existing data if available (for incremental processing)
+  // Load existing data if available (for incremental processing).
+  // In --reprocess-all mode we still read the file so user-authored driveTags
+  // survive a reprocess, but processedFiles/routes are discarded so every
+  // clip is re-extracted.
   let existingData = { processedFiles: [], routes: [], driveTags: {} };
   try {
     const raw = await readFile(OUTPUT_PATH, "utf-8");
-    existingData = JSON.parse(raw);
-    console.log(`Loaded existing data: ${existingData.processedFiles?.length || 0} processed files, ${existingData.routes?.length || 0} routes`);
+    const loaded = JSON.parse(raw);
+    if (REPROCESS_ALL) {
+      existingData = { processedFiles: [], routes: [], driveTags: loaded.driveTags || {} };
+      console.log(`Reprocess-all mode: discarding ${loaded.processedFiles?.length || 0} processed files / ${loaded.routes?.length || 0} routes (preserving ${Object.keys(loaded.driveTags || {}).length} drive tags)`);
+    } else {
+      existingData = loaded;
+      console.log(`Loaded existing data: ${existingData.processedFiles?.length || 0} processed files, ${existingData.routes?.length || 0} routes`);
+    }
   } catch {
     // No existing data, start fresh
   }

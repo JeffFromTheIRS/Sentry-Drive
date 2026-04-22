@@ -26,8 +26,9 @@
       "icon": "assets/icon.ico"
     },
     "nsis": {
-      "oneClick": true,
-      "allowToChangeInstallationDirectory": false
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
     },
     "publish": {
       "provider": "github",

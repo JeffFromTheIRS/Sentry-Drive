@@ -28,6 +28,25 @@
   --font-mono: 'Consolas', 'Menlo', 'Monaco', monospace;
 }
 
+/* Material Symbols (loaded from Google Fonts) reused under the existing
+   .material-icons class so all existing markup keeps working. */
+.material-icons {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
 /* ── Reset ──────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -195,7 +214,16 @@ html, body {
   transition: opacity 0.15s, background 0.15s;
   outline: none;
   align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
+
+.btn-primary .material-icons,
+.btn-danger .material-icons { font-size: 16px; }
+
+#btn-stop .material-icons { font-variation-settings: 'FILL' 1; }
 
 /* Inside a btn-row, buttons split the space equally */
 .btn-row .btn-primary,
@@ -1214,6 +1242,65 @@ html, body {
   background: rgba(255, 170, 0, 0.08);
   border-radius: var(--radius-sm);
   border: 1px solid rgba(255, 170, 0, 0.15);
+}
+
+/* ── Reprocess-All Confirm Modal ───────────────────────────────────────── */
+#reprocess-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+#reprocess-modal {
+  width: 360px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  padding: 28px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+.reprocess-modal-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(255, 170, 0, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--warn);
+}
+.reprocess-modal-icon .material-icons { font-size: 26px; }
+
+.reprocess-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+#reprocess-modal-msg {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.reprocess-modal-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 /* ── Update Modal ──────────────────────────────────────────────────────── */
