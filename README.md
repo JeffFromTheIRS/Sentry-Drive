@@ -13,7 +13,10 @@ And in the event you're missing data due to missing or corrupted footage, the Ch
 <img width="2560" height="1369" alt="image" src="https://github.com/user-attachments/assets/03f0ec67-a4cc-497c-bf70-693ce7e935bb" />
 
 ## Platforms
-Currently, this app is only available on Windows. [Check the releases tab](https://github.com/JeffFromTheIRS/Sentry-Drive/releases) for the latest version.
+This application is available for Windows and Mac. [Check the releases tab](https://github.com/JeffFromTheIRS/Sentry-Drive/releases) for the latest version.
+
+Because this program is unsigned, you will need to follow this step after you run the .dmg for the first time:
+<br> System Settings ? Privacy & Security ? Open Anyway
 
 ## Credits
 Originally created by [Scottmg1](https://github.com/Scottmg1), derived from his [Sentry USB project](https://github.com/Scottmg1/Sentry-USB). UI made with the help of Claude.
