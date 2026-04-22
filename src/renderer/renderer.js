@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initProcessingTab();
   initViewDrivesTab();
   initFooter();
+  initChangelogModal();
   loadDefaultPaths();
 });
 
@@ -199,6 +200,183 @@ function initFooter() {
 
   // Auto-check on launch
   window.electronAPI.checkForUpdate();
+}
+
+// ─── Changelog Modal ─────────────────────────────────────────────────────────
+async function initChangelogModal() {
+  const overlay = document.getElementById('changelog-overlay');
+  const titleEl = document.getElementById('changelog-modal-title');
+  const contentEl = document.getElementById('changelog-modal-content');
+  const ghBtn = document.getElementById('btn-changelog-github');
+  const dismissBtn = document.getElementById('btn-changelog-dismiss');
+  const closeBtn = document.getElementById('btn-changelog-close');
+
+  const close = () => overlay.classList.add('hidden');
+  dismissBtn.addEventListener('click', close);
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) close();
+  });
+
+  contentEl.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-external]');
+    if (a) {
+      e.preventDefault();
+      window.electronAPI.openExternal(a.href);
+    }
+  });
+
+  const currentVersion = await window.electronAPI.getAppVersion();
+  const lastSeen = localStorage.getItem('lastSeenVersion');
+
+  if (!lastSeen) {
+    localStorage.setItem('lastSeenVersion', currentVersion);
+    return;
+  }
+  if (lastSeen === currentVersion) return;
+
+  titleEl.textContent = 'What’s New';
+  contentEl.innerHTML = '<div class="changelog-loading">Loading changelog…</div>';
+  overlay.classList.remove('hidden');
+
+  const result = await window.electronAPI.getReleaseNotes(currentVersion);
+  localStorage.setItem('lastSeenVersion', currentVersion);
+
+  if (!result.success) {
+    close();
+    return;
+  }
+
+  contentEl.innerHTML = renderReleaseCard({
+    version: currentVersion,
+    publishedAt: result.publishedAt,
+    releaseName: result.name,
+    body: result.body || '',
+  });
+
+  ghBtn.onclick = () => {
+    if (result.htmlUrl) window.electronAPI.openExternal(result.htmlUrl);
+  };
+}
+
+// ── Release card rendering ──────────────────────────────────────────────────
+const CHANGELOG_TYPE_ICONS = { feature: '✦', improvement: '↑', fix: '✓', note: '•' };
+
+function classifyChange(text) {
+  const stripped = text.replace(/^\*\*([^*]+)\*\*/, '$1').trim();
+  const tagMatch = /^\[([a-z]+)\]\s+/i.exec(stripped);
+  if (tagMatch) {
+    const t = tagMatch[1].toLowerCase();
+    const remainder = stripped.slice(tagMatch[0].length);
+    if (/^(feat|feature|new|add|added)$/.test(t)) return { type: 'feature', body: remainder };
+    if (/^(fix|fixed|bug|bugfix)$/.test(t)) return { type: 'fix', body: remainder };
+    if (/^(impr|improv|improvement|change|changed|chore|enhance|enhancement|update|updated)$/.test(t)) {
+      return { type: 'improvement', body: remainder };
+    }
+    if (/^(note|info)$/.test(t)) return { type: 'note', body: remainder };
+  }
+  const prefixMatch = /^([a-z]+)[:\s]\s*/i.exec(stripped);
+  if (prefixMatch) {
+    const t = prefixMatch[1].toLowerCase();
+    const remainder = stripped.slice(prefixMatch[0].length);
+    if (/^(feat|feature|new|added)$/.test(t)) return { type: 'feature', body: remainder };
+    if (/^(fix|fixed|bug)$/.test(t)) return { type: 'fix', body: remainder };
+    if (/^(improv|improved|improvement|change|changed|chore|enhance|enhancement|update|updated)$/.test(t)) {
+      return { type: 'improvement', body: remainder };
+    }
+  }
+  if (/^(fixed|fix)\b/i.test(stripped)) return { type: 'fix', body: stripped };
+  if (/^(added|new)\b/i.test(stripped)) return { type: 'feature', body: stripped };
+  if (/^(improved|updated|changed|enhanced)\b/i.test(stripped)) return { type: 'improvement', body: stripped };
+  return { type: 'note', body: stripped };
+}
+
+function renderInline(s) {
+  const escaped = s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  return escaped
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" data-external>$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function formatReleaseDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function renderReleaseCard({ version, publishedAt, releaseName, body }) {
+  const lines = body.replace(/\r\n/g, '\n').split('\n');
+  let title = '';
+  const descParas = [];
+  const items = [];
+  let paraBuf = [];
+
+  const flushPara = () => {
+    if (paraBuf.length && items.length === 0) {
+      descParas.push(paraBuf.join(' '));
+    }
+    paraBuf = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { flushPara(); continue; }
+
+    const h = /^#{1,6}\s+(.*)$/.exec(line);
+    if (h) {
+      flushPara();
+      if (!title) title = h[1].trim();
+      continue;
+    }
+
+    const li = /^[-*]\s+(.*)$/.exec(line);
+    if (li) {
+      flushPara();
+      items.push(classifyChange(li[1].trim()));
+      continue;
+    }
+
+    paraBuf.push(line);
+  }
+  flushPara();
+
+  if (!title) {
+    const n = (releaseName || '').trim();
+    const versionRe = new RegExp(`^v?${version.replace(/[.+-]/g, '\\$&')}\\s*[—–-:]?\\s*`, 'i');
+    title = n.replace(versionRe, '').trim() || 'Release Notes';
+  }
+
+  const descHtml = descParas.length
+    ? `<div class="changelog-description">${descParas.map((p) => `<p>${renderInline(p)}</p>`).join('')}</div>`
+    : '';
+
+  const itemsHtml = items.length
+    ? `<div class="changelog-changes">${items.map((it) => `
+        <div class="changelog-item">
+          <span class="changelog-item-type ${it.type}">${CHANGELOG_TYPE_ICONS[it.type]}</span>
+          <span>${renderInline(it.body)}</span>
+        </div>
+      `).join('')}</div>`
+    : '';
+
+  const dateHtml = formatReleaseDate(publishedAt);
+
+  return `
+    <div class="changelog-version">
+      <div class="changelog-version-header">
+        <span class="changelog-version-tag">v${renderInline(version)}</span>
+        ${dateHtml ? `<span class="changelog-version-date">${dateHtml}</span>` : ''}
+      </div>
+      <div class="changelog-version-title">${renderInline(title)}</div>
+      ${descHtml}
+      ${itemsHtml || (descHtml ? '' : '<div class="changelog-loading">No changelog details provided.</div>')}
+    </div>
+  `;
 }
 
 function onUpdateStatus({ status, version, percent, message }) {
