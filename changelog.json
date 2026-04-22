@@ -1,0 +1,25 @@
+{
+  "versions": [
+    {
+      "version": "1.1.0-beta.1",
+      "date": "2026-04-22",
+      "title": "Drive Timeline & Beta Channel",
+      "changes": [
+        { "type": "feature", "description": "Drive Timeline view for browsing drives chronologically." },
+        { "type": "feature", "description": "Beta update channel — enroll in Settings to receive pre-release builds." },
+        { "type": "improvement", "description": "Processing pipeline split into separate, reusable functions." }
+      ]
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-04-17",
+      "title": "Initial Release",
+      "changes": [
+        { "type": "feature", "description": "Process Tesla dashcam clips into drive-data.json." },
+        { "type": "feature", "description": "View drives on an interactive map with route overlays." },
+        { "type": "feature", "description": "GPS repair for gaps in dashcam logs using OSRM routing." },
+        { "type": "feature", "description": "Drive tagging for organization and filtering." }
+      ]
+    }
+  ]
+}

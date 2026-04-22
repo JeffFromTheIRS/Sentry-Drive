@@ -1383,6 +1383,10 @@ html, body {
   border-color: var(--text-dim);
 }
 
+.settings-view-changelog {
+  margin-top: 8px;
+}
+
 /* ── Changelog Modal ───────────────────────────────────────────────────── */
 #changelog-overlay {
   --changelog-accent: var(--success);

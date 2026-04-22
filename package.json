@@ -19,7 +19,8 @@
     "files": [
       "src/**/*",
       "assets/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "changelog.json"
     ],
     "artifactName": "Sentry-Drive-Setup-${version}.${ext}",
     "win": {

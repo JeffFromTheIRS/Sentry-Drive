@@ -100,40 +100,15 @@ ipcMain.handle('download-update', () => autoUpdater.downloadUpdate().catch(() =>
 
 ipcMain.handle('install-update', () => autoUpdater.quitAndInstall(false, true));
 
-ipcMain.handle('get-release-notes', (_e, version) => {
-  const tag = `v${version}`;
-  const url = `https://api.github.com/repos/JeffFromTheIRS/Sentry-Drive/releases/tags/${tag}`;
-  return new Promise((resolve) => {
-    const req = require('https').get(
-      url,
-      { timeout: 5000, headers: { 'User-Agent': 'Sentry-Drive', Accept: 'application/vnd.github+json' } },
-      (res) => {
-        if (res.statusCode !== 200) {
-          res.resume();
-          resolve({ success: false, status: res.statusCode });
-          return;
-        }
-        let data = '';
-        res.on('data', (c) => (data += c));
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            resolve({
-              success: true,
-              name: json.name || tag,
-              body: json.body || '',
-              htmlUrl: json.html_url,
-              publishedAt: json.published_at,
-            });
-          } catch (err) {
-            resolve({ success: false, error: err.message });
-          }
-        });
-      }
-    );
-    req.on('error', (err) => resolve({ success: false, error: err.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ success: false, error: 'timeout' }); });
-  });
+ipcMain.handle('get-changelog', () => {
+  try {
+    const filePath = path.join(app.getAppPath(), 'changelog.json');
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    return { success: true, versions: data.versions ?? [] };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
