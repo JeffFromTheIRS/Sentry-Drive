@@ -333,15 +333,21 @@ async function initChangelogModal() {
   const result = await window.electronAPI.getChangelog();
   changelogVersions = result.success ? result.versions : [];
 
+  const currentVersion = await window.electronAPI.getAppVersion();
+
+  const isBetaVersion = (v) => /beta/i.test(v);
+  const visibleVersions = () => {
+    const onBeta = localStorage.getItem('enrollBeta') === 'true' || isBetaVersion(currentVersion);
+    return onBeta ? changelogVersions : changelogVersions.filter((v) => !isBetaVersion(v.version));
+  };
+
   viewAllBtn.addEventListener('click', () => {
     if (!changelogVersions.length) return;
     titleEl.textContent = 'Changelog';
-    contentEl.innerHTML = changelogVersions.map(renderChangelogEntry).join('');
+    contentEl.innerHTML = visibleVersions().map(renderChangelogEntry).join('');
     contentEl.scrollTop = 0;
     overlay.classList.remove('hidden');
   });
-
-  const currentVersion = await window.electronAPI.getAppVersion();
   const lastSeen = localStorage.getItem('lastSeenVersion');
 
   if (!lastSeen) {
@@ -973,14 +979,16 @@ async function loadDrives() {
 
 function refreshUnitDisplay() {
   if (!drives.length) return;
-  if (lastDrivesMeta) renderDriveStats(drives, lastDrivesMeta);
   renderDriveList(drives);
   if (selectedDriveId !== null) {
     const d = drives.find((x) => x.id === selectedDriveId);
     if (d) {
-      selectedDriveId = null;
-      selectDrive(d);
+      // Re-render the selected drive directly — skip the aggregate render
+      // so the panel doesn't flash overview stats on the way through.
+      renderSelectedDriveStats(d);
     }
+  } else if (lastDrivesMeta) {
+    renderDriveStats(drives, lastDrivesMeta);
   }
 }
 

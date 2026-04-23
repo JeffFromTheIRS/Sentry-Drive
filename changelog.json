@@ -1,6 +1,31 @@
 {
   "versions": [
     {
+      "version": "1.1.0",
+      "date": "2026-04-23",
+      "title": "Drive Analytics, Map Layers & Unit Support",
+      "changes": [
+        { "type": "feature", "description": "FSD Analytics panel — click the stats panel to see a more detailed view of Full Self-Driving, Autopilot, TACC, and Manual miles, plus total disengagements and accelerator overrides." },
+        { "type": "feature", "description": "Color-coded FSD Score in the stats panel — red for low, green for high, with a smooth gradient between." },
+        { "type": "feature", "description": "Drive Timeline for browsing drives chronologically." },
+        { "type": "feature", "description": "Google Maps and Satellite base layers — switch from the layer control in the top-right of the map." },
+        { "type": "feature", "description": "Imperial / Metric unit toggle in Settings." },
+        { "type": "feature", "description": "Added toggle for showing FSD markers (disengagements and accelerator overrides) on drives." },
+        { "type": "improvement", "description": "Added stats for specific drives." },
+        { "type": "improvement", "description": "Added drive timeline with scrubbing." },
+        { "type": "improvement", "description": "Confirmation dialogs added to Check Drives and Revert Drives to avoid accidental triggers." },
+		{ "type": "fix", "description": "Processing runs on the app's bundled Node runtime — no separate Node.js install required." },
+        { "type": "fix", "description": "Process New Drives no longer fails silently on installed builds." },
+        { "type": "fix", "description": "Direction arrow no longer spins full circles when switching between drive and reverse." },
+        { "type": "fix", "description": "Clicking the map while viewing a specific drive no longer returns you to the overview." },
+        { "type": "fix", "description": "Dismissing the Changelog modal no longer closes the Settings modal behind it." },
+        { "type": "fix", "description": "Switching drives during playback no longer leaves the previous replay running, which could cause the new drive to continue playing through a pause." },
+        { "type": "fix", "description": "FSD, Autopilot, and Manual percentages are now rounded to whole numbers." },
+        { "type": "fix", "description": "Selecting a drive from the list no longer scrolls it behind the sticky date header." },
+        { "type": "fix", "description": "Tag edits inside the stats panel no longer collapse the FSD Analytics view." }
+      ]
+    },
+    {
       "version": "1.1.0-beta.5",
       "date": "2026-04-22",
       "title": "Update Modal Preview and Confirmation Modals",

@@ -518,51 +518,6 @@ html, body {
   padding: 24px 0;
 }
 
-/* ── AP Mode Section (info panel) ───────────────────────────────────────── */
-.info-ap {
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.ap-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  line-height: 1.4;
-  flex-wrap: wrap;
-}
-
-.ap-mode {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 2px 6px;
-  border-radius: 10px;
-  flex-shrink: 0;
-}
-
-.ap-fsd       { background: rgba(52, 211, 153, 0.15); color: #34d399; }
-.ap-autosteer { background: rgba(96, 165, 250, 0.15); color: var(--blue-light); }
-.ap-tacc      { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
-
-.ap-pct  { color: var(--text); font-weight: 600; min-width: 32px; }
-.ap-dist { color: var(--text-muted); }
-.ap-events {
-  font-size: 11px;
-  width: 100%;
-  padding-left: 48px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.ap-evt-disengage { color: rgba(248, 113, 113, 0.7); }
-.ap-evt-accel { color: #fbbf24; }
-.ap-evt-sep { color: var(--text-dim); }
-
 /* ── Repair Progress ───────────────────────────────────────────────────── */
 #repair-progress {
   display: flex;
@@ -661,21 +616,7 @@ html, body {
   color: var(--blue-light);
 }
 
-/* Tag section in info panel */
-.info-tags {
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
-}
-
-.info-tags-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
+/* Tag list (used in the map-stats header) */
 .info-tags-list {
   display: flex;
   flex-wrap: wrap;
@@ -760,64 +701,6 @@ html, body {
 #map {
   width: 100%;
   height: 100%;
-}
-
-/* ── Drive Info Overlay ─────────────────────────────────────────────────── */
-#drive-info-panel {
-  background: var(--drive-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.info-header {
-  margin-bottom: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
-}
-
-.info-date {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text);
-  display: block;
-}
-
-.info-time {
-  font-size: 13px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.info-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.info-val {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.1;
-}
-
-.info-unit {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
 }
 
 /* ── Back to Overview Button ────────────────────────────────────────────── */
