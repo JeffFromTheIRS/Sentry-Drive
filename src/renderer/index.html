@@ -103,8 +103,6 @@
 
         <div id="tag-filter" class="hidden"></div>
 
-        <div id="drive-info-panel" class="hidden"></div>
-
         <div id="drives-list"></div>
 
       </div>
@@ -163,6 +161,10 @@
             <label class="settings-checkbox-row">
               <span class="settings-checkbox-label">Hide other drives when viewing a drive</span>
               <input type="checkbox" id="chk-hide-other-drives" class="settings-checkbox" />
+            </label>
+            <label class="settings-checkbox-row" title="Disengagements and accelerator overrides">
+              <span class="settings-checkbox-label">Show FSD markers</span>
+              <input type="checkbox" id="chk-show-fsd-markers" class="settings-checkbox" />
             </label>
           </div>
           <div class="settings-section" style="margin-top: 16px;">
@@ -277,14 +279,17 @@
       </div>
       <button id="btn-back-overview" class="hidden"><span class="material-icons">arrow_back</span></button>
       <div id="map-overlay-bottom">
+        <div id="map-stats" class="hidden"></div>
         <div id="replay-bar" class="hidden">
-          <div id="replay-time-current" class="replay-time-current">--:--</div>
           <div class="replay-controls">
             <button id="btn-replay-play" class="replay-play-btn" title="Play">
               <span class="material-icons" id="replay-play-icon">play_arrow</span>
             </button>
             <span id="replay-time-start" class="replay-time">--:--</span>
-            <input type="range" id="replay-slider" class="replay-slider" min="0" max="0" value="0" />
+            <div class="replay-slider-wrap">
+              <div id="replay-time-current" class="replay-time-current">--:--</div>
+              <input type="range" id="replay-slider" class="replay-slider" min="0" max="0" value="0" />
+            </div>
             <span id="replay-time-end" class="replay-time">--:--</span>
             <button id="btn-replay-speed" class="replay-speed-btn" title="Playback speed">1x</button>
           </div>
@@ -293,7 +298,6 @@
             <span id="replay-fsd-span">FSD: <strong id="replay-fsd-val">--</strong></span>
           </div>
         </div>
-        <div id="map-stats" class="hidden"></div>
       </div>
       <div id="map-legend" class="hidden">
         <span class="legend-item"><span class="legend-swatch fsd-on"></span>Full Self-Driving</span>

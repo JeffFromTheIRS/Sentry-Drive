@@ -1,6 +1,26 @@
 {
   "versions": [
     {
+      "version": "1.1.0-beta.4",
+      "date": "2026-04-22",
+      "title": "Drive Stats Panel & FSD Analytics",
+      "changes": [
+        { "type": "feature", "description": "Color-coded FSD Score in the stats panel — red for low, green for high, with a smooth gradient between." },
+        { "type": "feature", "description": "Click the stats panel to expand an FSD Analytics view — donut chart breaking down Full Self-Driving, Autopilot, TACC, and Manual miles, plus total disengagements and accelerator overrides." },
+        { "type": "improvement", "description": "Selecting a specific drive swaps the aggregate stats panel for that drive's own stats and breakdown; back to overview restores the aggregate view." },
+        { "type": "improvement", "description": "Drive date/time header and tags moved into the stats panel — sidebar is cleaner, editing stays in place as you switch drives." },
+        { "type": "improvement", "description": "Timeline is now visually merged with the bottom edge of the stats panel as a single dock at the bottom of the map." },
+        { "type": "improvement", "description": "Current-time label floats directly above the timeline thumb and tracks with it as you scrub or play." },
+        { "type": "improvement", "description": "Stats panel cleanup — removed the Clips count, renamed “Miles” to “Miles Driven”." },
+        { "type": "improvement", "description": "Confirmation dialog icons are now filled rounded squares instead of outlined circles, matching the rest of the UI." },
+        { "type": "improvement", "description": "Settings → Map → new toggle for showing FSD markers (disengagements and accelerator overrides) on drives." },
+        { "type": "improvement", "description": "Renamed “Accel Overrides” to “Accelerator Overrides” in the stats panel." },
+        { "type": "fix", "description": "FSD, Autopilot, and Manual percentages are rounded to whole numbers." },
+        { "type": "fix", "description": "Selecting a drive from the list no longer scrolls it behind the sticky date header." },
+        { "type": "fix", "description": "Tag edits inside the stats panel no longer toggle the expanded view." }
+      ]
+    },
+    {
       "version": "1.1.0-beta.3",
       "date": "2026-04-22",
       "title": "Map Layers, Units, and Polish",
