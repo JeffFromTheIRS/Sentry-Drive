@@ -151,6 +151,29 @@ ipcMain.handle('download-update', () => autoUpdater.downloadUpdate().catch(() =>
 
 ipcMain.handle('install-update', () => autoUpdater.quitAndInstall(false, true));
 
+ipcMain.handle('fetch-remote-changelog', () => {
+  const url = 'https://raw.githubusercontent.com/JeffFromTheIRS/Sentry-Drive/main/changelog.json';
+  return new Promise((resolve) => {
+    const req = require('https').get(
+      url,
+      { timeout: 5000, headers: { 'User-Agent': 'Sentry-Drive' } },
+      (res) => {
+        if (res.statusCode !== 200) { res.resume(); resolve({ success: false, status: res.statusCode }); return; }
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            resolve({ success: true, versions: json.versions ?? [] });
+          } catch (err) { resolve({ success: false, error: err.message }); }
+        });
+      }
+    );
+    req.on('error', (err) => resolve({ success: false, error: err.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ success: false, error: 'timeout' }); });
+  });
+});
+
 ipcMain.handle('get-changelog', () => {
   try {
     const filePath = path.join(app.getAppPath(), 'changelog.json');

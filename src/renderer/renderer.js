@@ -442,6 +442,7 @@ function onUpdateStatus({ status, version, percent, message }) {
         document.getElementById('update-modal-msg').textContent =
           `Version ${version} is ready to install.`;
         document.getElementById('update-overlay').classList.remove('hidden');
+        populateUpdateModalChanges(version);
       }
 
       // Show footer download button
@@ -1141,6 +1142,22 @@ function fsdScoreColor(pct) {
   return `hsl(${hue}, 70%, 55%)`;
 }
 
+async function populateUpdateModalChanges(version) {
+  const box = document.getElementById('update-modal-changes');
+  box.innerHTML = '';
+  box.classList.add('hidden');
+  try {
+    const remote = await window.electronAPI.fetchRemoteChangelog();
+    if (!remote?.success) return;
+    const entry = (remote.versions ?? []).find((v) => v.version === version);
+    if (!entry) return;
+    box.innerHTML = renderChangelogEntry(entry);
+    box.classList.remove('hidden');
+  } catch {
+    /* silent — modal just shows without the changelog section */
+  }
+}
+
 function renderDriveStats(drives, meta) {
   lastDrivesMeta = meta;
   const totalMi = drives.reduce((s, d) => s + d.distanceMi, 0);
@@ -1674,6 +1691,9 @@ const SPEED_FACTORS = [1, 2, 5, 10];
 let replayCurrentBearing = 0;
 
 function initReplay(drive) {
+  // Stop any in-flight interval from a previous drive so we don't leak ticks
+  // into the new one (which would cause playback to continue through pauses).
+  stopReplay();
   replayDrive = drive;
   replayIdx = 0;
   replaySpeed = 1;

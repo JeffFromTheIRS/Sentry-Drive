@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "1.1.0-beta.5",
+      "date": "2026-04-22",
+      "title": "Update Modal Preview and Confirmation Modals",
+      "changes": [
+        { "type": "improvement", "description": "Update Available modal now previews the incoming version's changelog entry." },
+        { "type": "improvement", "description": "ALPHA status appended to Check Drives confirmation." },
+        { "type": "improvement", "description": "Replay play/pause button restyled as a rounded square to match the rest of the UI." },
+        { "type": "fix", "description": "Switching drives during playback no longer leaves the previous replay interval running, which could cause the new drive to continue playing through a pause." }
+      ]
+    },
+    {
       "version": "1.1.0-beta.4",
       "date": "2026-04-22",
       "title": "Drive Stats Panel & FSD Analytics",

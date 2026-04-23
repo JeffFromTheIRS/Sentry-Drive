@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   getChangelog: () => ipcRenderer.invoke('get-changelog'),
+  fetchRemoteChangelog: () => ipcRenderer.invoke('fetch-remote-changelog'),
   onUpdateStatus: (cb) => {
     const listener = (_ev, data) => cb(data);
     ipcRenderer.on('update-status', listener);
