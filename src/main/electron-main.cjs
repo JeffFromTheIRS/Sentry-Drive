@@ -145,6 +145,34 @@ ipcMain.handle('set-allow-prerelease', (_e, allow) => {
   autoUpdater.allowPrerelease = allow;
 });
 
+ipcMain.handle('remove-drive', async (_e, { filePath, driveStartTime }) => {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw);
+    const { groupIntoDrives } = await import('../processing/grouper.js');
+    const { drives } = groupIntoDrives(data.routes ?? []);
+    const target = drives.find((d) => d.startTime === driveStartTime);
+    if (!target) return { success: false, error: 'Drive not found' };
+
+    const removeSet = new Set(target.routeFiles.map((f) => f.replace(/\\/g, '/')));
+    data.routes = (data.routes ?? []).filter((r) => !removeSet.has(r.file.replace(/\\/g, '/')));
+    data.processedFiles = (data.processedFiles ?? []).filter((f) => !removeSet.has(f.replace(/\\/g, '/')));
+    if (data.driveTags) delete data.driveTags[driveStartTime];
+
+    data.routes = await routesToWireFormat(data.routes);
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('revert-to-stable', () => {
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = true;
+  return autoUpdater.checkForUpdates().catch(() => {});
+});
+
 ipcMain.handle('check-for-update', () => autoUpdater.checkForUpdates().catch(() => {}));
 
 ipcMain.handle('download-update', () => autoUpdater.downloadUpdate().catch(() => {}));

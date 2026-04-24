@@ -495,6 +495,7 @@ function buildDriveStats(clips, idx) {
     taccDistanceMi: r2(taccDistanceM / 1609.344),
     // Assisted aggregate (any state > 0 — for map/UI use)
     assistedPercent: pct(assistedDistanceM),
+    routeFiles: clips.map((c) => c.file),
   };
 }
 

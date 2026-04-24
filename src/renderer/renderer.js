@@ -166,6 +166,7 @@ function initTabs() {
 let updateState = 'idle'; // idle | checking | available | downloading | ready | error
 let updateSkipped = false; // true after user dismisses the update modal this session
 let pendingVersion = '';   // version string from the 'available' event
+let pendingRemoveDrive = null;
 
 function initFooter() {
   // GitHub link opens in external browser
@@ -188,9 +189,28 @@ function initFooter() {
   });
 
   // Version display
-  window.electronAPI.getAppVersion().then((v) => {
+  window.electronAPI.getAppVersion().then(async (v) => {
     document.getElementById('settings-version-number').textContent = `v${v}`;
     document.querySelector('.footer-version').textContent = `v${v}`;
+    if (/beta/i.test(v)) {
+      const result = await window.electronAPI.getChangelog();
+      const stableVersion = result.success
+        ? (result.versions.find((e) => !/beta/i.test(e.version))?.version ?? '')
+        : '';
+      if (stableVersion) {
+        document.getElementById('stable-version-label').textContent = `v${stableVersion}`;
+      }
+      document.getElementById('revert-stable-pill').classList.remove('hidden');
+    }
+  });
+
+  document.getElementById('btn-revert-stable').addEventListener('click', () => {
+    const betaCheckbox = document.getElementById('chk-beta');
+    betaCheckbox.checked = false;
+    localStorage.setItem('enrollBeta', 'false');
+    document.getElementById('beta-warning').classList.add('hidden');
+    document.getElementById('revert-stable-pill').classList.add('hidden');
+    window.electronAPI.revertToStable();
   });
 
   // Listen for update events from main process
@@ -813,6 +833,31 @@ function initViewDrivesTab() {
   revertOverlay.addEventListener('click', (e) => {
     if (e.target === revertOverlay) revertOverlay.classList.add('hidden');
   });
+
+  const removeDriveOverlay = document.getElementById('remove-drive-overlay');
+  document.getElementById('btn-remove-drive-cancel').addEventListener('click', () => {
+    removeDriveOverlay.classList.add('hidden');
+    pendingRemoveDrive = null;
+  });
+  removeDriveOverlay.addEventListener('click', (e) => {
+    if (e.target === removeDriveOverlay) {
+      removeDriveOverlay.classList.add('hidden');
+      pendingRemoveDrive = null;
+    }
+  });
+  document.getElementById('btn-remove-drive-confirm').addEventListener('click', async () => {
+    if (!pendingRemoveDrive || !loadedFilePath) return;
+    removeDriveOverlay.classList.add('hidden');
+    const drive = pendingRemoveDrive;
+    pendingRemoveDrive = null;
+    const result = await window.electronAPI.removeDrive({ filePath: loadedFilePath, driveStartTime: drive.startTime });
+    if (!result.success) return;
+    const wasSelected = selectedDriveId === drive.id;
+    drives = drives.filter((d) => d.startTime !== drive.startTime);
+    if (wasSelected) deselectDrive();
+    renderDriveList(drives);
+    renderDriveStats(drives, { totalRoutes: 0, processedFileCount: 0 });
+  });
 }
 
 async function updateRevertButton() {
@@ -1065,7 +1110,7 @@ function renderSelectedDriveStats(drive) {
     <div class="map-stat"><span class="map-stat-val">${durStr}</span><span class="map-stat-lbl">Duration</span></div>
     <div class="map-stat"><span class="map-stat-val">${speedVal(drive.avgSpeedMph ?? 0)}</span><span class="map-stat-lbl">Avg ${speedShort().toUpperCase()}</span></div>
     <div class="map-stat"><span class="map-stat-val">${speedVal(drive.maxSpeedMph ?? 0)}</span><span class="map-stat-lbl">Max ${speedShort().toUpperCase()}</span></div>
-    <div class="map-stat"><span class="map-stat-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span><span class="map-stat-lbl">FSD Score</span></div>
+    <div class="map-stat"><span class="map-stat-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span><span class="map-stat-lbl">FSD Usage</span></div>
   `;
   if (apPct > 0) summary += `<div class="map-stat"><span class="map-stat-val">${apPct}%</span><span class="map-stat-lbl">Autopilot</span></div>`;
 
@@ -1078,10 +1123,10 @@ function renderSelectedDriveStats(drive) {
   `;
 
   const slices = [];
-  if (fsdDistM > 0)    slices.push({ color: '#22cc55',                  pct: (fsdDistM / totalDistM) * 100 });
+  if (fsdDistM > 0)    slices.push({ color: '#22cc55',                    pct: (fsdDistM / totalDistM) * 100 });
   if (apDistM > 0)     slices.push({ color: 'var(--blue-light, #60a5fa)', pct: (apDistM / totalDistM) * 100 });
-  if (taccDistM > 0)   slices.push({ color: '#f59e0b',                  pct: (taccDistM / totalDistM) * 100 });
-  if (manualDistM > 0) slices.push({ color: 'rgba(148, 163, 184, 0.55)',pct: (manualDistM / totalDistM) * 100 });
+  if (taccDistM > 0)   slices.push({ color: '#f59e0b',                    pct: (taccDistM / totalDistM) * 100 });
+  if (manualDistM > 0) slices.push({ color: 'rgba(148, 163, 184, 0.55)',  pct: (manualDistM / totalDistM) * 100 });
 
   let cursor = 0;
   const gradientStops = slices.map((s) => {
@@ -1097,7 +1142,6 @@ function renderSelectedDriveStats(drive) {
         <div class="map-stats-chart" style="background: conic-gradient(${gradientStops});">
           <div class="map-stats-chart-center">
             <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
-            <span class="map-stats-chart-lbl">FSD</span>
           </div>
         </div>
         <div class="map-stats-legend">
@@ -1207,10 +1251,10 @@ function renderDriveStats(drives, meta) {
 
   // Build the donut chart: cumulative conic-gradient stops using exact percentages.
   const slices = [];
-  if (fsdDistM > 0)    slices.push({ color: '#22cc55',                  pct: (fsdDistM / totalDistM) * 100 });
+  if (fsdDistM > 0)    slices.push({ color: '#22cc55',                    pct: (fsdDistM / totalDistM) * 100 });
   if (apDistM > 0)     slices.push({ color: 'var(--blue-light, #60a5fa)', pct: (apDistM / totalDistM) * 100 });
-  if (taccDistM > 0)   slices.push({ color: '#f59e0b',                  pct: (taccDistM / totalDistM) * 100 });
-  if (manualDistM > 0) slices.push({ color: 'rgba(148, 163, 184, 0.55)',pct: (manualDistM / totalDistM) * 100 });
+  if (taccDistM > 0)   slices.push({ color: '#f59e0b',                    pct: (taccDistM / totalDistM) * 100 });
+  if (manualDistM > 0) slices.push({ color: 'rgba(148, 163, 184, 0.55)',  pct: (manualDistM / totalDistM) * 100 });
 
   let cursor = 0;
   const gradientStops = slices.map((s) => {
@@ -1219,14 +1263,13 @@ function renderDriveStats(drives, meta) {
     return `${s.color} ${start}% ${cursor}%`;
   }).join(', ');
 
-  let details = '<div class="map-stats-details-title">FSD Analytics</div>';
+  let details = '<div class="map-stats-section-header">Self Driving Analytics</div>';
   if (slices.length > 0) {
     details += `
       <div class="map-stats-chart-wrap">
         <div class="map-stats-chart" style="background: conic-gradient(${gradientStops});">
           <div class="map-stats-chart-center">
             <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
-            <span class="map-stats-chart-lbl">FSD</span>
           </div>
         </div>
         <div class="map-stats-legend">
@@ -1238,11 +1281,13 @@ function renderDriveStats(drives, meta) {
       </div>
     `;
   }
+  const avgFsdPct = drives.length > 0 ? Math.round(drives.reduce((s, d) => s + (d.fsdPercent ?? 0), 0) / drives.length) : 0;
   if (disengagements > 0 || accelOverrides > 0) {
     details += `
       <div class="map-stats-extras">
         <div><span class="map-stats-extra-val">${fmt(disengagements)}</span><span class="map-stats-extra-lbl">Disengagements</span></div>
         <div><span class="map-stats-extra-val">${fmt(accelOverrides)}</span><span class="map-stats-extra-lbl">Accelerator Overrides</span></div>
+        <div><span class="map-stats-extra-val">${avgFsdPct}%</span><span class="map-stats-extra-lbl">Avg FSD Usage</span></div>
       </div>
     `;
   }
@@ -1361,12 +1406,23 @@ function buildDriveItem(drive) {
     <div class="drive-item-tags">
       ${tagPills}
       <button class="tag-add-btn list-tag-add" title="Add tag">+</button>
+      <button class="drive-remove-btn" title="Remove drive"><span class="material-icons">delete</span></button>
     </div>
     <div class="list-tag-input-row hidden">
       <input type="text" class="tag-input list-tag-input" placeholder="New tag…" />
       <div class="tag-suggestions list-tag-suggestions hidden"></div>
     </div>
   `;
+
+  // Remove drive button
+  item.querySelector('.drive-remove-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    pendingRemoveDrive = drive;
+    const dateStr = new Date(drive.startTime).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    document.getElementById('remove-drive-modal-msg').textContent =
+      `Remove the drive on ${dateStr} (${startTime} — ${endTime})? This cannot be undone.`;
+    document.getElementById('remove-drive-overlay').classList.remove('hidden');
+  });
 
   // Tag remove buttons
   item.querySelectorAll('.tag-remove').forEach((btn) => {
