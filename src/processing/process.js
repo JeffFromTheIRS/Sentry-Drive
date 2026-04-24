@@ -8,7 +8,7 @@ import { readdir, writeFile, readFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { groupIntoDrives } from "./grouper.js";
+import { groupIntoDrives, encodeByteField } from "./grouper.js";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -320,6 +320,14 @@ async function main() {
   }
 }
 
+function routeForDisk(r) {
+  return {
+    ...r,
+    autopilotStates: encodeByteField(r.autopilotStates),
+    gearStates: encodeByteField(r.gearStates),
+  };
+}
+
 function streamWriteJSON(filePath, processedFiles, routes, driveTags) {
   return new Promise((resolve, reject) => {
     const ws = createWriteStream(filePath);
@@ -331,8 +339,7 @@ function streamWriteJSON(filePath, processedFiles, routes, driveTags) {
     ws.write(',"routes":[');
     for (let i = 0; i < routes.length; i++) {
       if (i > 0) ws.write(',');
-      // Each individual route is small enough to stringify
-      ws.write(JSON.stringify(routes[i]));
+      ws.write(JSON.stringify(routeForDisk(routes[i])));
     }
     ws.write(']');
 

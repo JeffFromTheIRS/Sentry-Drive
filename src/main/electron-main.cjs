@@ -267,6 +267,39 @@ ipcMain.handle('stop-processing', () => {
   return { success: true };
 });
 
+// ─── drive-data.json wire format ─────────────────────────────────────────────
+// gearStates / autopilotStates are written as base64 strings to match
+// Sentry-USB's []uint8 JSON encoding. Codec lives in the ESM grouper module;
+// memoize the dynamic import so we pay it once per process.
+let _byteFieldCodec;
+async function getByteFieldCodec() {
+  if (!_byteFieldCodec) {
+    const mod = await import('../processing/grouper.js');
+    _byteFieldCodec = { encode: mod.encodeByteField, decode: mod.decodeByteField };
+  }
+  return _byteFieldCodec;
+}
+
+async function routesToWireFormat(routes) {
+  if (!Array.isArray(routes)) return routes;
+  const { encode } = await getByteFieldCodec();
+  return routes.map((r) => ({
+    ...r,
+    autopilotStates: encode(r.autopilotStates),
+    gearStates: encode(r.gearStates),
+  }));
+}
+
+async function decodeRoutesByteFields(routes) {
+  if (!Array.isArray(routes)) return routes;
+  const { decode } = await getByteFieldCodec();
+  return routes.map((r) => ({
+    ...r,
+    autopilotStates: decode(r.autopilotStates),
+    gearStates: decode(r.gearStates),
+  }));
+}
+
 // ─── Drive Tags ──────────────────────────────────────────────────────────────
 
 ipcMain.handle('get-drive-tags', (_e, filePath) => {
@@ -279,7 +312,7 @@ ipcMain.handle('get-drive-tags', (_e, filePath) => {
   }
 });
 
-ipcMain.handle('set-drive-tags', (_e, { filePath, driveKey, tags }) => {
+ipcMain.handle('set-drive-tags', async (_e, { filePath, driveKey, tags }) => {
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(raw);
@@ -291,6 +324,7 @@ ipcMain.handle('set-drive-tags', (_e, { filePath, driveKey, tags }) => {
       data.driveTags[driveKey] = tags;
     }
 
+    data.routes = await routesToWireFormat(data.routes);
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
     return { success: true };
   } catch (err) {
@@ -374,7 +408,7 @@ ipcMain.handle('repair-gps', async (_e, { filePath, useRouting }) => {
     const raw = fs.readFileSync(filePath, 'utf-8');
     fs.copyFileSync(filePath, filePath + '.bak');
     const data = JSON.parse(raw);
-    let routes = data.routes ?? [];
+    let routes = await decodeRoutesByteFields(data.routes ?? []);
     let bridgedGaps = 0;
     let routedGaps = 0;
 
@@ -516,6 +550,7 @@ ipcMain.handle('repair-gps', async (_e, { filePath, useRouting }) => {
       data.processedFiles.push(br.file);
     }
 
+    data.routes = await routesToWireFormat(routes);
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
     return { success: true, bridgedGaps, routedGaps, removedBridges };
   } catch (err) {

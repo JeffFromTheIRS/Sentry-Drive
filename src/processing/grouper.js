@@ -8,6 +8,24 @@ const PARK_GAP_SECONDS = 2.0;
 
 const FILE_TIMESTAMP_RE = /(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/;
 
+// Sentry-USB is Go; its `[]uint8` fields (gearStates, autopilotStates) are
+// serialized by encoding/json as base64 strings. We normalize on read so the
+// rest of the pipeline always sees a Uint8Array, and encode on write so files
+// produced by Sentry-Drive match Sentry-USB's on-disk format.
+export function decodeByteField(field) {
+  if (field == null) return field;
+  if (typeof field === "string") {
+    return Uint8Array.from(Buffer.from(field, "base64"));
+  }
+  return field;
+}
+
+export function encodeByteField(field) {
+  if (field == null) return field;
+  if (typeof field === "string") return field;
+  return Buffer.from(field).toString("base64");
+}
+
 /**
  * Parse a Tesla dashcam filename into a Date object.
  */
@@ -40,14 +58,19 @@ function haversineM(lat1, lon1, lat2, lon2) {
  * Group routes into logical drives based on time gaps and gear state.
  */
 export function groupIntoDrives(routes) {
-  // Deduplicate routes by normalized file path
+  // Deduplicate routes by normalized file path, decoding Go-serialized base64
+  // byte fields so downstream code always sees Uint8Array.
   const seen = new Set();
   const unique = [];
   for (const r of routes) {
     const norm = r.file.replace(/\\/g, "/");
     if (!seen.has(norm)) {
       seen.add(norm);
-      unique.push(r);
+      unique.push({
+        ...r,
+        autopilotStates: decodeByteField(r.autopilotStates),
+        gearStates: decodeByteField(r.gearStates),
+      });
     }
   }
 
