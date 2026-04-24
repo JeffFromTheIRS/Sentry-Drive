@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   setAllowPrerelease: (allow) => ipcRenderer.invoke('set-allow-prerelease', allow),
+  revertToStable: () => ipcRenderer.invoke('revert-to-stable'),
+  removeDrive: (args) => ipcRenderer.invoke('remove-drive', args),
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),

@@ -174,6 +174,10 @@
               <span id="settings-version-number">v1.0.0</span>
               <span id="settings-update-msg" class="hidden"></span>
             </div>
+            <div id="revert-stable-pill" class="revert-stable-pill hidden">
+              <span id="stable-version-label" class="stable-version-label"></span>
+              <button id="btn-revert-stable" class="btn-revert-stable">Revert to Stable</button>
+            </div>
             <label class="settings-checkbox-row">
               <span class="settings-checkbox-label">Enroll in Beta</span>
               <input type="checkbox" id="chk-beta" class="settings-checkbox" />
@@ -213,6 +217,19 @@
         <div class="reprocess-modal-actions">
           <button id="btn-check-drives-confirm" class="btn-primary btn-update-full">Check Drives</button>
           <button id="btn-check-drives-cancel" class="update-skip-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Remove Drive Confirm Modal ───────────────────────────────── -->
+    <div id="remove-drive-overlay" class="hidden">
+      <div class="reprocess-modal">
+        <div class="reprocess-modal-icon remove-drive-modal-icon"><span class="material-icons">delete</span></div>
+        <div class="reprocess-modal-title">Remove Drive?</div>
+        <div id="remove-drive-modal-msg" class="reprocess-modal-msg"></div>
+        <div class="reprocess-modal-actions">
+          <button id="btn-remove-drive-confirm" class="btn-danger btn-update-full">Remove Drive</button>
+          <button id="btn-remove-drive-cancel" class="update-skip-btn">Cancel</button>
         </div>
       </div>
     </div>

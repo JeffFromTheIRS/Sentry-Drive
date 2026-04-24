@@ -1,6 +1,18 @@
 {
   "versions": [
     {
+      "version": "1.1.1-beta.1",
+      "date": "2026-04-24",
+      "title": "Drive Removal & Revert to Stable",
+      "changes": [
+        { "type": "feature", "description": "You can now delete drives from your drive list." },
+        { "type": "feature", "description": "Added option to revert to last stable build." },
+        { "type": "improvement", "description": "Average FSD Usage is now shown alongside total disengagements and accelerator overrides in the aggregate analytics panel." },
+        { "type": "improvement", "description": "Renamed \"FSD Analytics\" to \"Self Driving Analytics\" for clarity." }
+		{ "type": "improvement", "description": "Viewing specific drives now displays \"FSD Usage\" instead of \"FSD Score\"." }
+      ]
+    },
+    {
       "version": "1.1.0",
       "date": "2026-04-23",
       "title": "Drive Analytics, Map Layers & Unit Support",

@@ -879,6 +879,13 @@ html, body {
   border-top: 1px solid var(--border-light);
 }
 
+.map-stats-section-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
 .map-stats-details-title {
   font-size: 11px;
   font-weight: 700;
@@ -1354,6 +1361,36 @@ html, body {
 .update-current   { color: var(--text-muted); }
 .update-error     { color: var(--text-dim); }
 
+.revert-stable-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(34, 204, 85, 0.25);
+  border-radius: var(--radius-sm);
+  background: rgba(34, 204, 85, 0.08);
+}
+
+.stable-version-label {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: #22cc55;
+}
+
+.btn-revert-stable {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: #22cc55;
+  color: #fff;
+  cursor: pointer;
+}
+.btn-revert-stable:hover { background: #1db34a; }
+
 .btn-update-full {
   width: 100%;
   padding: 10px 14px;
@@ -1424,7 +1461,8 @@ html, body {
 /* ── Reprocess-All / Check Drives / Revert Confirm Modals ─────────────── */
 #reprocess-overlay,
 #check-drives-overlay,
-#revert-overlay {
+#revert-overlay,
+#remove-drive-overlay {
   position: fixed;
   inset: 0;
   z-index: 9500;
@@ -1449,6 +1487,28 @@ html, body {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
   text-align: center;
 }
+
+.remove-drive-modal-icon {
+  background: rgba(255, 68, 85, 0.12);
+  color: var(--danger);
+}
+
+.drive-remove-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 2px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  line-height: 1;
+}
+.drive-remove-btn .material-icons { font-size: 15px; }
+.drive-remove-btn:hover { color: var(--danger); }
+.drive-item:hover .drive-remove-btn { display: flex; }
 
 .reprocess-modal-icon {
   width: 48px;
