@@ -12,6 +12,14 @@
 		{ "type": "improvement", "description": "Viewing specific drives now displays \"FSD Usage\" instead of \"FSD Score\"." }
       ]
     },
+	{
+      "version": "1.1.1",
+      "date": "2026-04-23",
+      "title": "Sentry USB Drive Data Fix",
+      "changes": [
+        { "type": "fix", "description": "Fixed an issue where Sentry Drive did not properly read the drive-data.json from Sentry USB." }
+      ]
+    },
     {
       "version": "1.1.0",
       "date": "2026-04-23",
