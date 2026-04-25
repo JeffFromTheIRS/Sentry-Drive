@@ -44,4 +44,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('processing-output', listener);
     return () => ipcRenderer.off('processing-output', listener);
   },
+  tessiePreview: (args) => ipcRenderer.invoke('tessie-preview', args),
+  tessieImport: (args) => ipcRenderer.invoke('tessie-import', args),
+  tessieImportCancel: () => ipcRenderer.invoke('tessie-import-cancel'),
+  tessieRemoveAll: (args) => ipcRenderer.invoke('tessie-remove-all', args),
+  tessieRemoveHidden: (args) => ipcRenderer.invoke('tessie-remove-hidden', args),
+  tessieApiGetToken: () => ipcRenderer.invoke('tessie-api-get-token'),
+  tessieApiSaveToken: (args) => ipcRenderer.invoke('tessie-api-save-token', args),
+  tessieApiValidate: (args) => ipcRenderer.invoke('tessie-api-validate', args),
+  tessieApiPreview: (args) => ipcRenderer.invoke('tessie-api-preview', args),
+  tessieApiImport: (args) => ipcRenderer.invoke('tessie-api-import', args),
+  tessieApiCancel: () => ipcRenderer.invoke('tessie-api-cancel'),
+  onTessieProgress: (cb) => {
+    const listener = (_ev, data) => cb(data);
+    ipcRenderer.on('tessie-progress', listener);
+    return () => ipcRenderer.off('tessie-progress', listener);
+  },
 });

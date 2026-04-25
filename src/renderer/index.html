@@ -91,6 +91,10 @@
           <button id="btn-repair-gps" class="btn-primary btn-secondary" disabled><span class="material-icons">build</span>Check Drives</button>
           <button id="btn-revert-gps" class="btn-danger" disabled><span class="material-icons">undo</span>Revert</button>
         </div>
+        <div class="btn-row">
+          <button id="btn-import-tessie" class="btn-primary btn-secondary" disabled><span class="material-icons">cloud_download</span>Import Tessie</button>
+          <button id="btn-remove-tessie" class="btn-danger" disabled><span class="material-icons">delete_sweep</span>Remove Tessie</button>
+        </div>
 
         <div id="repair-progress" class="hidden">
           <div class="repair-progress-label">
@@ -234,6 +238,101 @@
       </div>
     </div>
 
+    <!-- ── Tessie Import Modal ─────────────────────────────────────── -->
+    <div id="tessie-overlay" class="hidden">
+      <div class="reprocess-modal">
+        <div class="reprocess-modal-icon"><span class="material-icons">cloud_download</span></div>
+        <div class="reprocess-modal-title">Import Tessie Drives</div>
+
+        <div class="tessie-mode-tabs">
+          <button class="tessie-mode-btn active" data-mode="api" type="button">Tessie API (recommended)</button>
+          <button class="tessie-mode-btn" data-mode="csv" type="button">CSV Export</button>
+        </div>
+
+        <div id="tessie-mode-api" class="tessie-mode-pane">
+          <div class="reprocess-modal-msg">
+            Paste your Tessie access token. Generate one at
+            <a href="#" id="tessie-token-link">tessie.com → Developer Settings → Generate Access Token</a>.
+            The API gives dense GPS and per-point FSD state — matches Tessie's website exactly.
+          </div>
+          <div class="tessie-file-row">
+            <label class="field-label">Access Token</label>
+            <div class="input-row">
+              <input id="tessie-api-token" type="password" class="text-input" placeholder="Paste token…" />
+              <button id="tessie-api-validate" class="btn-icon" title="Validate"><span class="material-icons">check</span></button>
+            </div>
+          </div>
+          <div class="tessie-file-row">
+            <label class="field-label">Vehicle</label>
+            <select id="tessie-api-vin" class="text-input" disabled>
+              <option>Validate token to load vehicles…</option>
+            </select>
+          </div>
+          <div class="tessie-date-row">
+            <div class="tessie-file-row">
+              <label class="field-label">From</label>
+              <input id="tessie-api-from" type="date" class="text-input" />
+            </div>
+            <div class="tessie-file-row">
+              <label class="field-label">To</label>
+              <input id="tessie-api-to" type="date" class="text-input" />
+            </div>
+          </div>
+        </div>
+
+        <div id="tessie-mode-csv" class="tessie-mode-pane hidden">
+          <div class="reprocess-modal-msg">
+            Sparse polling (~60s) — short drives may have too few samples and fall back to straight lines. Use the API option for better quality.
+          </div>
+          <div class="tessie-file-row">
+            <label class="field-label">Drives CSV</label>
+            <div class="input-row">
+              <input id="tessie-drives-path" type="text" class="text-input" placeholder="VIN NUMBER-drives.csv" readonly />
+              <button id="browse-tessie-drives" class="btn-icon" title="Browse"><span class="material-icons">folder_open</span></button>
+            </div>
+          </div>
+          <div class="tessie-file-row">
+            <label class="field-label">Driving States CSV</label>
+            <div class="input-row">
+              <input id="tessie-states-path" type="text" class="text-input" placeholder="driving_states.csv" readonly />
+              <button id="browse-tessie-states" class="btn-icon" title="Browse"><span class="material-icons">folder_open</span></button>
+            </div>
+          </div>
+        </div>
+
+        <div id="tessie-preview" class="tessie-preview hidden"></div>
+
+        <div id="tessie-import-progress" class="hidden">
+          <div class="repair-progress-label">
+            <span id="tessie-phase">Working…</span>
+            <span id="tessie-eta"></span>
+            <span id="tessie-pct"></span>
+          </div>
+          <div class="repair-progress-track"><div id="tessie-bar"></div></div>
+        </div>
+
+        <div class="reprocess-modal-actions">
+          <button id="btn-tessie-confirm" class="btn-primary btn-update-full" disabled>Import</button>
+          <button id="btn-tessie-cancel" class="update-skip-btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Remove Tessie Confirm Modal ─────────────────────────────── -->
+    <div id="remove-tessie-overlay" class="hidden">
+      <div class="reprocess-modal">
+        <div class="reprocess-modal-icon remove-drive-modal-icon"><span class="material-icons">delete_sweep</span></div>
+        <div class="reprocess-modal-title">Remove All Tessie Data?</div>
+        <div class="reprocess-modal-msg">
+          This removes every imported Tessie drive from your drive data. A backup (.bak) is written first so you can revert.
+        </div>
+        <div class="reprocess-modal-actions">
+          <button id="btn-remove-tessie-confirm" class="btn-danger btn-update-full">Remove Tessie</button>
+          <button id="btn-remove-tessie-cancel" class="update-skip-btn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Revert Confirm Modal ────────────────────────────────────── -->
     <div id="revert-overlay" class="hidden">
       <div class="reprocess-modal">
@@ -321,6 +420,7 @@
       <div id="map-legend" class="hidden">
         <span class="legend-item"><span class="legend-swatch fsd-on"></span>Full Self-Driving</span>
         <span class="legend-item"><span class="legend-swatch fsd-off"></span>Manual</span>
+        <span class="legend-item legend-tessie hidden"><span class="legend-swatch legend-swatch-tessie"></span>Tessie (imported)</span>
       </div>
 
     </div>

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, safeStorage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -160,7 +160,7 @@ ipcMain.handle('remove-drive', async (_e, { filePath, driveStartTime }) => {
     if (data.driveTags) delete data.driveTags[driveStartTime];
 
     data.routes = await routesToWireFormat(data.routes);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+    await writeDriveDataJSON(filePath, data);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -218,7 +218,48 @@ ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
     const raw = fs.readFileSync(filePath, 'utf-8');
     const data = JSON.parse(raw);
     const { groupIntoDrives } = await import('../processing/grouper.js');
-    const { drives, timeGroupCount, routeCount, droppedCount } = groupIntoDrives(data.routes ?? []);
+    const { drives: groupedDrives, timeGroupCount, routeCount, droppedCount } = groupIntoDrives(data.routes ?? []);
+
+    // SEI always wins: any imported (Tessie) drive whose time window overlaps
+    // a real dashcam drive is hidden at load time. The Tessie clips remain in
+    // drive-data.json so the user can recover them by removing SEI later;
+    // they're just filtered out of the displayed drive list.
+    const seiRanges = [];
+    for (const d of groupedDrives) {
+      if (d.source === 'tessie' || !d.startTime || !d.endTime) continue;
+      const s = Date.parse(d.startTime);
+      const e = Date.parse(d.endTime);
+      if (Number.isFinite(s) && Number.isFinite(e)) seiRanges.push({ s, e });
+    }
+    seiRanges.sort((a, b) => a.s - b.s);
+
+    let hiddenTessieCount = 0;
+    const hiddenTessieDrives = [];
+    const drives = [];
+    for (const d of groupedDrives) {
+      if (d.source === 'tessie') {
+        const s = Date.parse(d.startTime);
+        const e = Date.parse(d.endTime);
+        let overlapsSEI = false;
+        for (const r of seiRanges) {
+          if (r.e <= s) continue;   // SEI ends at-or-before Tessie starts → no overlap
+          if (r.s >= e) break;       // SEI starts at-or-after Tessie ends → no overlap
+          overlapsSEI = true;
+          break;
+        }
+        if (overlapsSEI) {
+          hiddenTessieCount++;
+          hiddenTessieDrives.push({
+            startTime: d.startTime,
+            endTime: d.endTime,
+            distanceMi: d.distanceMi,
+          });
+          continue;
+        }
+      }
+      drives.push(d);
+    }
+
     // Attach tags to drives
     const driveTags = data.driveTags ?? {};
     for (const d of drives) {
@@ -243,6 +284,8 @@ ipcMain.handle('load-and-group-drives', async (_e, filePath) => {
       timeGroupCount,
       routeCount,
       droppedCount,
+      hiddenTessieCount,
+      hiddenTessieDrives,
     };
   } catch (err) {
     return { success: false, error: err.message };
@@ -318,6 +361,56 @@ async function routesToWireFormat(routes) {
   }));
 }
 
+// Stream-write the full drive-data.json so large files don't blow past
+// V8's max string length (~512MB) during JSON.stringify. The routes array
+// is emitted route-by-route; top-level maps/arrays use a normal stringify.
+function writeDriveDataJSON(filePath, data) {
+  return new Promise((resolve, reject) => {
+    const ws = fs.createWriteStream(filePath);
+    let errored = false;
+    ws.on('error', (err) => { errored = true; reject(err); });
+    ws.on('finish', () => { if (!errored) resolve(); });
+
+    const write = (chunk) => {
+      // Respect backpressure — wait for drain on full buffers.
+      if (!ws.write(chunk)) return new Promise((r) => ws.once('drain', r));
+      return null;
+    };
+
+    (async () => {
+      try {
+        await write('{\n');
+
+        // processedFiles
+        await write('  "processedFiles": ');
+        await write(JSON.stringify(data.processedFiles ?? [], null, 2).replace(/\n/g, '\n  '));
+        await write(',\n');
+
+        // routes — one compact object per line to avoid one huge string
+        const routes = Array.isArray(data.routes) ? data.routes : [];
+        await write('  "routes": [');
+        for (let i = 0; i < routes.length; i++) {
+          await write(i === 0 ? '\n    ' : ',\n    ');
+          await write(JSON.stringify(routes[i]));
+        }
+        if (routes.length > 0) await write('\n  ');
+        await write('],\n');
+
+        // driveTags
+        await write('  "driveTags": ');
+        await write(JSON.stringify(data.driveTags ?? {}, null, 2).replace(/\n/g, '\n  '));
+
+        await write('\n}\n');
+        ws.end();
+      } catch (err) {
+        errored = true;
+        ws.destroy();
+        reject(err);
+      }
+    })();
+  });
+}
+
 async function decodeRoutesByteFields(routes) {
   if (!Array.isArray(routes)) return routes;
   const { decode } = await getByteFieldCodec();
@@ -353,7 +446,7 @@ ipcMain.handle('set-drive-tags', async (_e, { filePath, driveKey, tags }) => {
     }
 
     data.routes = await routesToWireFormat(data.routes);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+    await writeDriveDataJSON(filePath, data);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -579,8 +672,459 @@ ipcMain.handle('repair-gps', async (_e, { filePath, useRouting }) => {
     }
 
     data.routes = await routesToWireFormat(routes);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
+    await writeDriveDataJSON(filePath, data);
     return { success: true, bridgedGaps, routedGaps, removedBridges };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── Tessie Import ───────────────────────────────────────────────────────────
+// Two-phase flow so the UI can preview counts before committing to the full
+// densification run. The renderer calls `tessie-preview` first, then
+// `tessie-import` to actually write.
+
+let tessieImportCancel = false;
+
+function sendTessieProgress(data) {
+  mainWindow?.webContents.send('tessie-progress', data);
+}
+
+ipcMain.handle('tessie-preview', async (_e, { driveDataPath, drivesCsvPath, statesCsvPath }) => {
+  try {
+    const { parseDrivesCSV, parseDrivingStatesCSV, buildExistingDriveRanges, hasOverlap, buildExternalSignature, calibrateDriveTime } =
+      require('../processing/tessie-import.cjs');
+
+    const drivesText = fs.readFileSync(drivesCsvPath, 'utf-8');
+    const statesText = fs.readFileSync(statesCsvPath, 'utf-8');
+    const rawDrives = parseDrivesCSV(drivesText);
+    const statesIndex = parseDrivingStatesCSV(statesText);
+    // Apply per-drive TZ calibration up-front so overlap detection matches
+    // what the import phase will actually write.
+    const tDrives = rawDrives.map((d) => calibrateDriveTime(d, statesIndex));
+
+    // Load existing drive data to check overlaps
+    let existingRanges = [];
+    const existingSignatures = new Set();
+    if (fs.existsSync(driveDataPath)) {
+      const raw = fs.readFileSync(driveDataPath, 'utf-8');
+      const data = JSON.parse(raw);
+      const { groupIntoDrives } = await import('../processing/grouper.js');
+      const { drives } = groupIntoDrives(data.routes ?? []);
+      existingRanges = buildExistingDriveRanges(drives);
+      for (const r of (data.routes ?? [])) {
+        if (r.externalSignature) existingSignatures.add(r.externalSignature);
+      }
+    }
+
+    let toImport = 0;
+    let overlapSkipped = 0;
+    let duplicateSkipped = 0;
+
+    for (const d of tDrives) {
+      if (existingSignatures.has(buildExternalSignature(d))) { duplicateSkipped++; continue; }
+      if (hasOverlap(d, existingRanges)) { overlapSkipped++; continue; }
+      toImport++;
+    }
+
+    return {
+      success: true,
+      totalDrives: tDrives.length,
+      toImport,
+      overlapSkipped,
+      duplicateSkipped,
+      statePointCount: statesIndex.length,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tessie-import-cancel', () => {
+  tessieImportCancel = true;
+  return { success: true };
+});
+
+ipcMain.handle('tessie-import', async (_e, { driveDataPath, drivesCsvPath, statesCsvPath, useRouting }) => {
+  tessieImportCancel = false;
+  try {
+    const tessieMod = require('../processing/tessie-import.cjs');
+    const { parseDrivesCSV, parseDrivingStatesCSV, buildExistingDriveRanges, hasOverlap, buildExternalSignature, buildClipsForDrive, calibrateDriveTime } = tessieMod;
+
+    sendTessieProgress({ phase: 'Reading CSVs…', current: 0, total: 1 });
+    const drivesText = fs.readFileSync(drivesCsvPath, 'utf-8');
+    const statesText = fs.readFileSync(statesCsvPath, 'utf-8');
+    const rawDrives = parseDrivesCSV(drivesText);
+    const statesIndex = parseDrivingStatesCSV(statesText);
+    const tDrives = rawDrives.map((d) => calibrateDriveTime(d, statesIndex));
+
+    // Load or init drive data
+    let data;
+    if (fs.existsSync(driveDataPath)) {
+      fs.copyFileSync(driveDataPath, driveDataPath + '.bak');
+      data = JSON.parse(fs.readFileSync(driveDataPath, 'utf-8'));
+    } else {
+      data = { routes: [], processedFiles: [], driveTags: {} };
+    }
+    if (!Array.isArray(data.routes)) data.routes = [];
+    if (!Array.isArray(data.processedFiles)) data.processedFiles = [];
+
+    // Build overlap index from existing drives
+    const { groupIntoDrives } = await import('../processing/grouper.js');
+    const { drives: existingDrives } = groupIntoDrives(data.routes);
+    const existingRanges = buildExistingDriveRanges(existingDrives);
+    const existingSignatures = new Set();
+    for (const r of data.routes) {
+      if (r.externalSignature) existingSignatures.add(r.externalSignature);
+    }
+
+    // Filter to candidates that will actually be imported
+    const candidates = [];
+    for (const d of tDrives) {
+      if (existingSignatures.has(buildExternalSignature(d))) continue;
+      if (hasOverlap(d, existingRanges)) continue;
+      candidates.push(d);
+    }
+
+    sendTessieProgress({ phase: 'Building clips…', current: 0, total: candidates.length });
+
+    let imported = 0;
+    let canceled = false;
+    const skipReasons = {};
+    const startMs = Date.now();
+
+    for (let i = 0; i < candidates.length; i++) {
+      if (tessieImportCancel) { canceled = true; break; }
+      const d = candidates[i];
+      const elapsed = Date.now() - startMs;
+      const etaSec = i > 0 ? Math.round((elapsed / i) * (candidates.length - i) / 1000) : 0;
+      sendTessieProgress({ phase: 'Building clips…', current: i + 1, total: candidates.length, etaSec });
+
+      const result = buildClipsForDrive(d, statesIndex);
+
+      if (!result.clips) {
+        const key = result.reason || 'unknown';
+        skipReasons[key] = (skipReasons[key] || 0) + 1;
+        continue;
+      }
+
+      for (const clip of result.clips) {
+        data.routes.push(clip);
+        data.processedFiles.push(clip.file);
+      }
+      imported++;
+    }
+
+    sendTessieProgress({ phase: 'Saving…', current: candidates.length, total: candidates.length });
+    data.routes = await routesToWireFormat(data.routes);
+    await writeDriveDataJSON(driveDataPath, data);
+
+    return {
+      success: true,
+      imported,
+      canceled,
+      totalCandidates: candidates.length,
+      skipReasons,
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    tessieImportCancel = false;
+  }
+});
+
+// ─── Tessie API Import ───────────────────────────────────────────────────────
+// Uses api.tessie.com to fetch dense per-drive polylines (with per-point
+// autopilot state). Much better fidelity than the CSV-export path.
+
+const TESSIE_TOKEN_FILE = () => path.join(app.getPath('userData'), 'tessie-token.bin');
+
+function saveTessieToken(token) {
+  if (!token) {
+    try { fs.unlinkSync(TESSIE_TOKEN_FILE()); } catch {}
+    return;
+  }
+  const buf = safeStorage.isEncryptionAvailable()
+    ? safeStorage.encryptString(token)
+    : Buffer.from('plain:' + token, 'utf-8');
+  fs.writeFileSync(TESSIE_TOKEN_FILE(), buf);
+}
+
+function loadTessieToken() {
+  try {
+    const buf = fs.readFileSync(TESSIE_TOKEN_FILE());
+    if (buf.slice(0, 6).toString('utf-8') === 'plain:') {
+      return buf.slice(6).toString('utf-8');
+    }
+    return safeStorage.decryptString(buf);
+  } catch {
+    return '';
+  }
+}
+
+ipcMain.handle('tessie-api-get-token', () => ({ token: loadTessieToken() }));
+
+ipcMain.handle('tessie-api-save-token', (_e, { token }) => {
+  try { saveTessieToken(token); return { success: true }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+ipcMain.handle('tessie-api-validate', async (_e, { token }) => {
+  try {
+    const { fetchVehicles } = require('../processing/tessie-api.cjs');
+    const vehicles = await fetchVehicles(token);
+    return {
+      success: true,
+      vehicles: vehicles.map((v) => ({
+        vin: v.vin || v.last_state?.vehicle_state?.vin,
+        displayName: v.last_state?.display_name || v.last_state?.vehicle_state?.vehicle_name || '',
+      })).filter((v) => v.vin),
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+let tessieApiCancel = false;
+
+ipcMain.handle('tessie-api-cancel', () => { tessieApiCancel = true; return { success: true }; });
+
+// Build a normalized drive summary (what buildClipsForApiDrive wants) by
+// merging a /drives entry with the per-drive points array from /path.
+function normalizeApiDrive(driveEntry, pointsArr) {
+  const pts = Array.isArray(pointsArr) ? pointsArr : [];
+  const startedAtSec = driveEntry.started_at || (pts[0]?.timestamp ?? null);
+  const endedAtSec = driveEntry.ended_at || (pts[pts.length - 1]?.timestamp ?? null);
+  return {
+    externalId: driveEntry.id,
+    startedAt: startedAtSec != null ? startedAtSec * 1000 : null,
+    endedAt: endedAtSec != null ? endedAtSec * 1000 : null,
+    durationMs: (startedAtSec && endedAtSec) ? (endedAtSec - startedAtSec) * 1000 : 0,
+    distanceMi: Number.isFinite(driveEntry.odometer_distance) ? driveEntry.odometer_distance : 0,
+    autopilotDistanceMi: Number.isFinite(driveEntry.autopilot_distance) ? driveEntry.autopilot_distance : 0,
+    startingOdometer: driveEntry.starting_odometer ?? null,
+    endingOdometer: driveEntry.ending_odometer ?? null,
+    startLat: driveEntry.starting_latitude ?? pts[0]?.latitude ?? null,
+    startLng: driveEntry.starting_longitude ?? pts[0]?.longitude ?? null,
+    endLat: driveEntry.ending_latitude ?? pts[pts.length - 1]?.latitude ?? null,
+    endLng: driveEntry.ending_longitude ?? pts[pts.length - 1]?.longitude ?? null,
+    points: pts,
+  };
+}
+
+ipcMain.handle('tessie-api-preview', async (_e, { token, vin, fromSec, toSec, driveDataPath }) => {
+  try {
+    const { fetchDrives } = require('../processing/tessie-api.cjs');
+    const { buildExistingDriveRanges, hasOverlap, buildExternalSignature } = require('../processing/tessie-import.cjs');
+
+    const drives = await fetchDrives(token, vin, { from: fromSec, to: toSec });
+
+    // Build existing-drive index from current drive-data.json
+    let existingRanges = [];
+    const existingSignatures = new Set();
+    if (driveDataPath && fs.existsSync(driveDataPath)) {
+      const raw = fs.readFileSync(driveDataPath, 'utf-8');
+      const data = JSON.parse(raw);
+      const { groupIntoDrives } = await import('../processing/grouper.js');
+      const { drives: existing } = groupIntoDrives(data.routes ?? []);
+      existingRanges = buildExistingDriveRanges(existing);
+      for (const r of (data.routes ?? [])) {
+        if (r.externalSignature) existingSignatures.add(r.externalSignature);
+      }
+    }
+
+    let toImport = 0;
+    let overlapSkipped = 0;
+    let duplicateSkipped = 0;
+
+    for (const d of drives) {
+      const normalized = {
+        startedAt: (d.started_at ?? 0) * 1000,
+        endedAt: (d.ended_at ?? 0) * 1000,
+        startingOdometer: d.starting_odometer ?? null,
+      };
+      if (existingSignatures.has(buildExternalSignature(normalized))) { duplicateSkipped++; continue; }
+      if (hasOverlap(normalized, existingRanges)) { overlapSkipped++; continue; }
+      toImport++;
+    }
+
+    return { success: true, totalDrives: drives.length, toImport, overlapSkipped, duplicateSkipped };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tessie-api-import', async (_e, { token, vin, fromSec, toSec, driveDataPath }) => {
+  tessieApiCancel = false;
+  try {
+    const { fetchDrives, fetchPath, Throttler } = require('../processing/tessie-api.cjs');
+    const { buildExistingDriveRanges, hasOverlap, buildExternalSignature, buildClipsForApiDrive } = require('../processing/tessie-import.cjs');
+
+    sendTessieProgress({ phase: 'Fetching drives list…', current: 0, total: 1 });
+    const drivesList = await fetchDrives(token, vin, { from: fromSec, to: toSec });
+
+    // Load or init drive data
+    let data;
+    if (fs.existsSync(driveDataPath)) {
+      fs.copyFileSync(driveDataPath, driveDataPath + '.bak');
+      data = JSON.parse(fs.readFileSync(driveDataPath, 'utf-8'));
+    } else {
+      data = { routes: [], processedFiles: [], driveTags: {} };
+    }
+    if (!Array.isArray(data.routes)) data.routes = [];
+    if (!Array.isArray(data.processedFiles)) data.processedFiles = [];
+
+    const { groupIntoDrives } = await import('../processing/grouper.js');
+    const { drives: existingDrives } = groupIntoDrives(data.routes);
+    const existingRanges = buildExistingDriveRanges(existingDrives);
+    const existingSignatures = new Set();
+    for (const r of data.routes) {
+      if (r.externalSignature) existingSignatures.add(r.externalSignature);
+    }
+
+    // Filter overlap / duplicates
+    const candidates = [];
+    for (const d of drivesList) {
+      const normalized = {
+        startedAt: (d.started_at ?? 0) * 1000,
+        endedAt: (d.ended_at ?? 0) * 1000,
+        startingOdometer: d.starting_odometer ?? null,
+      };
+      if (existingSignatures.has(buildExternalSignature(normalized))) continue;
+      if (hasOverlap(normalized, existingRanges)) continue;
+      candidates.push(d);
+    }
+
+    sendTessieProgress({ phase: 'Fetching paths…', current: 0, total: candidates.length });
+
+    const throttler = new Throttler(1000);
+    let imported = 0;
+    let canceled = false;
+    const skipReasons = {};
+    const startMs = Date.now();
+
+    for (let i = 0; i < candidates.length; i++) {
+      if (tessieApiCancel) { canceled = true; break; }
+      const d = candidates[i];
+      const elapsed = Date.now() - startMs;
+      const etaSec = i > 0 ? Math.round((elapsed / i) * (candidates.length - i) / 1000) : 0;
+      sendTessieProgress({ phase: 'Fetching paths…', current: i + 1, total: candidates.length, etaSec });
+
+      await throttler.wait();
+
+      let pathBuckets;
+      try {
+        pathBuckets = await fetchPath(token, vin, {
+          from: d.started_at,
+          to: d.ended_at,
+          separate: true,
+          simplify: false,
+          details: true,
+        });
+      } catch (err) {
+        skipReasons['fetch-error'] = (skipReasons['fetch-error'] || 0) + 1;
+        continue;
+      }
+
+      const points = pathBuckets.length > 0 ? pathBuckets[0] : [];
+      const apiDrive = normalizeApiDrive(d, points);
+      const result = buildClipsForApiDrive(apiDrive);
+
+      if (!result.clips) {
+        skipReasons[result.reason || 'unknown'] = (skipReasons[result.reason || 'unknown'] || 0) + 1;
+        continue;
+      }
+      for (const clip of result.clips) {
+        data.routes.push(clip);
+        data.processedFiles.push(clip.file);
+      }
+      imported++;
+    }
+
+    sendTessieProgress({ phase: 'Saving…', current: candidates.length, total: candidates.length });
+    data.routes = await routesToWireFormat(data.routes);
+    await writeDriveDataJSON(driveDataPath, data);
+
+    return { success: true, imported, canceled, totalCandidates: candidates.length, skipReasons };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    tessieApiCancel = false;
+  }
+});
+
+// Remove only the Tessie clips whose grouped drive is hidden by SEI overlap.
+// Useful for cleaning up legacy imports that landed on the wrong side of an
+// overlap-check edge case before this was tightened.
+ipcMain.handle('tessie-remove-hidden', async (_e, { driveDataPath }) => {
+  try {
+    if (!fs.existsSync(driveDataPath)) return { success: false, error: 'File not found' };
+    const data = JSON.parse(fs.readFileSync(driveDataPath, 'utf-8'));
+
+    const { groupIntoDrives } = await import('../processing/grouper.js');
+    const { drives } = groupIntoDrives(data.routes ?? []);
+
+    // Build SEI ranges and find Tessie drives that overlap them.
+    const seiRanges = [];
+    for (const d of drives) {
+      if (d.source === 'tessie' || !d.startTime || !d.endTime) continue;
+      const s = Date.parse(d.startTime);
+      const e = Date.parse(d.endTime);
+      if (Number.isFinite(s) && Number.isFinite(e)) seiRanges.push({ s, e });
+    }
+    seiRanges.sort((a, b) => a.s - b.s);
+
+    const hiddenSignatures = new Set();
+    for (const d of drives) {
+      if (d.source !== 'tessie') continue;
+      const s = Date.parse(d.startTime);
+      const e = Date.parse(d.endTime);
+      for (const r of seiRanges) {
+        if (r.e <= s) continue;
+        if (r.s >= e) break;
+        if (d.externalSignature) hiddenSignatures.add(d.externalSignature);
+        break;
+      }
+    }
+
+    if (hiddenSignatures.size === 0) return { success: true, removed: 0 };
+
+    fs.copyFileSync(driveDataPath, driveDataPath + '.bak');
+    const before = (data.routes ?? []).length;
+    data.routes = (data.routes ?? []).filter(
+      (r) => !(r.source === 'tessie' && hiddenSignatures.has(r.externalSignature))
+    );
+    const removedRoutes = before - data.routes.length;
+    data.routes = await routesToWireFormat(data.routes);
+    await writeDriveDataJSON(driveDataPath, data);
+    return { success: true, removed: hiddenSignatures.size, removedRoutes };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tessie-remove-all', async (_e, { driveDataPath }) => {
+  try {
+    if (!fs.existsSync(driveDataPath)) return { success: false, error: 'File not found' };
+    fs.copyFileSync(driveDataPath, driveDataPath + '.bak');
+    const data = JSON.parse(fs.readFileSync(driveDataPath, 'utf-8'));
+
+    const tessieFiles = new Set(
+      (data.routes ?? [])
+        .filter((r) => r.source === 'tessie')
+        .map((r) => (r.file || '').replace(/\\/g, '/'))
+    );
+    const removed = tessieFiles.size;
+    if (removed === 0) return { success: true, removed: 0 };
+
+    data.routes = (data.routes ?? []).filter((r) => r.source !== 'tessie');
+    data.processedFiles = (data.processedFiles ?? []).filter(
+      (f) => !tessieFiles.has((f || '').replace(/\\/g, '/'))
+    );
+
+    data.routes = await routesToWireFormat(data.routes);
+    await writeDriveDataJSON(driveDataPath, data);
+    return { success: true, removed };
   } catch (err) {
     return { success: false, error: err.message };
   }

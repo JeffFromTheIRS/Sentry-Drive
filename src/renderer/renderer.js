@@ -643,6 +643,7 @@ async function autoLoadDriveData(filePath) {
     renderOverviewOnMap();
     document.getElementById('btn-repair-gps').disabled = false;
     updateRevertButton();
+    updateTessieButtonStates();
 
     // Switch to drives tab
     document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -801,6 +802,7 @@ function fmtDuration(sec) {
 // ─── View Drives Tab ──────────────────────────────────────────────────────────
 function initViewDrivesTab() {
   document.getElementById('btn-load-drives').addEventListener('click', loadDrives);
+  initTessieImport();
 
   const checkOverlay = document.getElementById('check-drives-overlay');
   document.getElementById('btn-repair-gps').addEventListener('click', () => {
@@ -858,6 +860,389 @@ function initViewDrivesTab() {
     renderDriveList(drives);
     renderDriveStats(drives, { totalRoutes: 0, processedFileCount: 0 });
   });
+}
+
+// ─── Tessie Import ───────────────────────────────────────────────────────────
+let tessieProgressListener = null;
+let tessieDrivesPath = '';
+let tessieStatesPath = '';
+let tessieImportMode = 'api';
+
+function initTessieImport() {
+  const overlay = document.getElementById('tessie-overlay');
+  const drivesInput = document.getElementById('tessie-drives-path');
+  const statesInput = document.getElementById('tessie-states-path');
+  const previewEl = document.getElementById('tessie-preview');
+  const progressEl = document.getElementById('tessie-import-progress');
+  const confirmBtn = document.getElementById('btn-tessie-confirm');
+  const closeBtn = document.getElementById('btn-tessie-cancel');
+
+  const tokenInput = document.getElementById('tessie-api-token');
+  const vinSelect = document.getElementById('tessie-api-vin');
+  const fromInput = document.getElementById('tessie-api-from');
+  const toInput = document.getElementById('tessie-api-to');
+
+  const resetModal = () => {
+    tessieDrivesPath = '';
+    tessieStatesPath = '';
+    drivesInput.value = '';
+    statesInput.value = '';
+    previewEl.classList.add('hidden');
+    previewEl.innerHTML = '';
+    progressEl.classList.add('hidden');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Import';
+    closeBtn.textContent = 'Close';
+  };
+
+  // Mode toggle
+  document.querySelectorAll('.tessie-mode-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      tessieImportMode = b.dataset.mode;
+      document.querySelectorAll('.tessie-mode-btn').forEach((x) => x.classList.toggle('active', x === b));
+      document.getElementById('tessie-mode-api').classList.toggle('hidden', tessieImportMode !== 'api');
+      document.getElementById('tessie-mode-csv').classList.toggle('hidden', tessieImportMode !== 'csv');
+      previewEl.classList.add('hidden');
+      previewEl.innerHTML = '';
+      confirmBtn.disabled = true;
+      refreshConfirmReady();
+    });
+  });
+
+  // Default date range: last 90 days
+  const today = new Date();
+  const ninetyAgo = new Date(today.getTime() - 90 * 24 * 3600 * 1000);
+  const fmtDate = (d) => d.toISOString().slice(0, 10);
+  fromInput.value = fmtDate(ninetyAgo);
+  toInput.value = fmtDate(today);
+
+  // Open link in external browser
+  document.getElementById('tessie-token-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    window.electronAPI.openExternal('https://dash.tessie.com/settings/api');
+  });
+
+  document.getElementById('btn-import-tessie').addEventListener('click', async () => {
+    if (!loadedFilePath) {
+      alert('Load a drive-data.json first.');
+      return;
+    }
+    resetModal();
+    // Populate saved token
+    try {
+      const { token } = await window.electronAPI.tessieApiGetToken();
+      if (token) {
+        tokenInput.value = token;
+        // Auto-validate quietly so the VIN dropdown is ready
+        validateApiToken(true);
+      }
+    } catch {}
+    overlay.classList.remove('hidden');
+  });
+
+  closeBtn.addEventListener('click', () => {
+    if (confirmBtn.textContent === 'Importing…') {
+      if (tessieImportMode === 'api') window.electronAPI.tessieApiCancel();
+      else window.electronAPI.tessieImportCancel();
+      return;
+    }
+    overlay.classList.add('hidden');
+  });
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay && confirmBtn.textContent !== 'Importing…') {
+      overlay.classList.add('hidden');
+    }
+  });
+
+  document.getElementById('browse-tessie-drives').addEventListener('click', async () => {
+    const p = await window.electronAPI.selectFile({ filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    if (!p) return;
+    tessieDrivesPath = p;
+    drivesInput.value = p;
+    await maybePreview();
+  });
+  document.getElementById('browse-tessie-states').addEventListener('click', async () => {
+    const p = await window.electronAPI.selectFile({ filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    if (!p) return;
+    tessieStatesPath = p;
+    statesInput.value = p;
+    await maybePreview();
+  });
+
+  // Validate API token (load vehicles + save token)
+  document.getElementById('tessie-api-validate').addEventListener('click', () => validateApiToken(false));
+  tokenInput.addEventListener('change', () => validateApiToken(false));
+  [fromInput, toInput, vinSelect].forEach((el) => el.addEventListener('change', () => maybePreview()));
+
+  async function validateApiToken(silent) {
+    const token = tokenInput.value.trim();
+    if (!token) {
+      if (!silent) alert('Paste your Tessie access token first.');
+      return;
+    }
+    vinSelect.disabled = true;
+    vinSelect.innerHTML = '<option>Validating…</option>';
+    const result = await window.electronAPI.tessieApiValidate({ token });
+    if (!result.success) {
+      vinSelect.innerHTML = '<option>Validation failed</option>';
+      if (!silent) alert(`Token validation failed:\n${result.error}`);
+      return;
+    }
+    if (result.vehicles.length === 0) {
+      vinSelect.innerHTML = '<option>No vehicles on account</option>';
+      return;
+    }
+    vinSelect.innerHTML = result.vehicles
+      .map((v) => `<option value="${escapeHtml(v.vin)}">${escapeHtml(v.displayName || v.vin)}</option>`)
+      .join('');
+    vinSelect.disabled = false;
+    await window.electronAPI.tessieApiSaveToken({ token });
+    await maybePreview();
+  }
+
+  function refreshConfirmReady() {
+    if (tessieImportMode === 'api') {
+      confirmBtn.disabled = !(tokenInput.value.trim() && vinSelect.value && !vinSelect.disabled);
+    } else {
+      confirmBtn.disabled = !(tessieDrivesPath && tessieStatesPath);
+    }
+  }
+
+  async function maybePreview() {
+    if (!loadedFilePath) return;
+    refreshConfirmReady();
+
+    if (tessieImportMode === 'api') {
+      if (!tokenInput.value.trim() || !vinSelect.value || vinSelect.disabled) return;
+      const fromSec = Math.floor(new Date(fromInput.value + 'T00:00:00').getTime() / 1000);
+      const toSec = Math.floor(new Date(toInput.value + 'T23:59:59').getTime() / 1000);
+      previewEl.classList.remove('hidden');
+      previewEl.innerHTML = '<em>Querying Tessie API…</em>';
+      confirmBtn.disabled = true;
+      const result = await window.electronAPI.tessieApiPreview({
+        token: tokenInput.value.trim(),
+        vin: vinSelect.value,
+        fromSec, toSec,
+        driveDataPath: loadedFilePath,
+      });
+      if (!result.success) {
+        previewEl.innerHTML = `<span style="color:#f87171">Preview failed: ${escapeHtml(result.error)}</span>`;
+        return;
+      }
+      renderPreview(result);
+    } else {
+      if (!tessieDrivesPath || !tessieStatesPath) return;
+      previewEl.classList.remove('hidden');
+      previewEl.innerHTML = '<em>Scanning CSVs…</em>';
+      confirmBtn.disabled = true;
+      const result = await window.electronAPI.tessiePreview({
+        driveDataPath: loadedFilePath,
+        drivesCsvPath: tessieDrivesPath,
+        statesCsvPath: tessieStatesPath,
+      });
+      if (!result.success) {
+        previewEl.innerHTML = `<span style="color:#f87171">Preview failed: ${escapeHtml(result.error)}</span>`;
+        return;
+      }
+      renderPreview(result);
+    }
+  }
+
+  function renderPreview(result) {
+    const parts = [];
+    parts.push(`Found <span class="tessie-preview-count">${fmt(result.totalDrives)}</span> drive(s) on Tessie.`);
+    parts.push(`<span class="tessie-preview-count">${fmt(result.toImport)}</span> will be imported.`);
+    if (result.overlapSkipped > 0) parts.push(`${fmt(result.overlapSkipped)} skipped (overlaps existing SEI data).`);
+    if (result.duplicateSkipped > 0) parts.push(`${fmt(result.duplicateSkipped)} skipped (already imported).`);
+    previewEl.innerHTML = parts.join('<br>');
+    confirmBtn.disabled = result.toImport === 0;
+  }
+
+  confirmBtn.addEventListener('click', async () => {
+    if (!loadedFilePath) return;
+
+    const beforeCount = drives.length;
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Importing…';
+    closeBtn.textContent = 'Cancel Import';
+    progressEl.classList.remove('hidden');
+
+    const phaseEl = document.getElementById('tessie-phase');
+    const pctEl = document.getElementById('tessie-pct');
+    const etaEl = document.getElementById('tessie-eta');
+    const barEl = document.getElementById('tessie-bar');
+    phaseEl.textContent = 'Starting…';
+    pctEl.textContent = '';
+    etaEl.textContent = '';
+    barEl.style.width = '0%';
+
+    if (tessieProgressListener) tessieProgressListener();
+    tessieProgressListener = window.electronAPI.onTessieProgress(({ phase, current, total, etaSec }) => {
+      phaseEl.textContent = phase;
+      if (total > 0) {
+        const pct = Math.round((current / total) * 100);
+        pctEl.textContent = `${pct}%`;
+        barEl.style.width = `${pct}%`;
+        if (etaSec && etaSec > 0) {
+          const m = Math.floor(etaSec / 60);
+          const s = etaSec % 60;
+          etaEl.textContent = m > 0 ? `${m}m ${s}s left` : `${s}s left`;
+        } else {
+          etaEl.textContent = '';
+        }
+      }
+    });
+
+    let result;
+    if (tessieImportMode === 'api') {
+      const fromSec = Math.floor(new Date(fromInput.value + 'T00:00:00').getTime() / 1000);
+      const toSec = Math.floor(new Date(toInput.value + 'T23:59:59').getTime() / 1000);
+      result = await window.electronAPI.tessieApiImport({
+        token: tokenInput.value.trim(),
+        vin: vinSelect.value,
+        fromSec, toSec,
+        driveDataPath: loadedFilePath,
+      });
+    } else {
+      result = await window.electronAPI.tessieImport({
+        driveDataPath: loadedFilePath,
+        drivesCsvPath: tessieDrivesPath,
+        statesCsvPath: tessieStatesPath,
+      });
+    }
+
+    if (tessieProgressListener) { tessieProgressListener(); tessieProgressListener = null; }
+    closeBtn.textContent = 'Close';
+
+    if (!result.success) {
+      alert(`Tessie import failed:\n${result.error}`);
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Import';
+      return;
+    }
+
+    overlay.classList.add('hidden');
+    await reloadDrivesAfterWrite();
+
+    const afterCount = drives.length;
+    const visibleAdded = afterCount - beforeCount;
+    const hiddenList = lastDrivesMeta?.hiddenTessieDrives ?? [];
+    const hiddenBySei = hiddenList.length;
+
+    const reasonLabel = {
+      'no-coords': 'no GPS samples and no start/end coords',
+      'no-points': 'API returned no path points',
+      'no-clips': 'no valid time windows',
+      'fetch-error': 'Tessie API request failed',
+      'unknown': 'other',
+    };
+    const lines = [];
+    lines.push(result.canceled
+      ? `Import canceled. ${fmt(result.imported)} drive(s) written before cancel.`
+      : `Imported ${fmt(result.imported)} Tessie drive(s).`);
+    lines.push('');
+    lines.push(`Drive count: ${fmt(beforeCount)} → ${fmt(afterCount)} (+${fmt(visibleAdded)})`);
+    if (hiddenBySei > 0) {
+      lines.push('');
+      lines.push(`${fmt(hiddenBySei)} drive(s) hidden because they overlap dashcam drives:`);
+      const sample = hiddenList.slice(0, 8);
+      for (const h of sample) {
+        const date = (h.startTime || '').slice(0, 10);
+        const start = (h.startTime || '').slice(11, 16);
+        const end = (h.endTime || '').slice(11, 16);
+        lines.push(`  • ${date} ${start}–${end}  (${(h.distanceMi ?? 0).toFixed(1)} mi)`);
+      }
+      if (hiddenList.length > sample.length) {
+        lines.push(`  • …and ${fmt(hiddenList.length - sample.length)} more`);
+      }
+    }
+    const skipped = result.skipReasons || {};
+    const totalSkipped = Object.values(skipped).reduce((a, b) => a + b, 0);
+    if (totalSkipped > 0) {
+      lines.push('');
+      lines.push(`${fmt(totalSkipped)} drive(s) skipped during import:`);
+      for (const [reason, count] of Object.entries(skipped)) {
+        lines.push(`  • ${fmt(count)} — ${reasonLabel[reason] || reason}`);
+      }
+    }
+    if (hiddenBySei > 0) {
+      lines.push('');
+      lines.push('Click OK to delete these hidden drives from the file (recoverable from .bak).');
+      lines.push('Click Cancel to keep them stored (they will stay hidden as long as SEI covers the same time).');
+      if (confirm(lines.join('\n'))) {
+        const cleanupResult = await window.electronAPI.tessieRemoveHidden({ driveDataPath: loadedFilePath });
+        if (cleanupResult.success) {
+          await reloadDrivesAfterWrite();
+          alert(`Removed ${fmt(cleanupResult.removed)} hidden Tessie drive(s) from the file.`);
+        } else {
+          alert(`Cleanup failed: ${cleanupResult.error}`);
+        }
+      }
+    } else {
+      alert(lines.join('\n'));
+    }
+  });
+
+  // Remove Tessie handlers
+  const removeOverlay = document.getElementById('remove-tessie-overlay');
+  document.getElementById('btn-remove-tessie').addEventListener('click', () => {
+    if (!loadedFilePath) return;
+    removeOverlay.classList.remove('hidden');
+  });
+  document.getElementById('btn-remove-tessie-cancel').addEventListener('click', () => {
+    removeOverlay.classList.add('hidden');
+  });
+  removeOverlay.addEventListener('click', (e) => {
+    if (e.target === removeOverlay) removeOverlay.classList.add('hidden');
+  });
+  document.getElementById('btn-remove-tessie-confirm').addEventListener('click', async () => {
+    removeOverlay.classList.add('hidden');
+    if (!loadedFilePath) return;
+    const beforeCount = drives.length;
+    const result = await window.electronAPI.tessieRemoveAll({ driveDataPath: loadedFilePath });
+    if (!result.success) {
+      alert(`Failed to remove Tessie data:\n${result.error}`);
+      return;
+    }
+    await reloadDrivesAfterWrite();
+    const afterCount = drives.length;
+    alert(`Removed ${fmt(result.removed)} Tessie drive(s).\n\nDrive count: ${fmt(beforeCount)} → ${fmt(afterCount)} (${fmt(afterCount - beforeCount)})`);
+  });
+}
+
+async function reloadDrivesAfterWrite() {
+  if (!loadedFilePath) return;
+  showLoading();
+  try {
+    const reloaded = await window.electronAPI.loadAndGroupDrives(loadedFilePath);
+    if (reloaded.success) {
+      drives = reloaded.drives;
+      overviewRoutes = reloaded.overviewRoutes ?? [];
+      refreshAllTags(reloaded.driveTags ?? {});
+      renderTagFilter();
+      renderDriveStats(drives, reloaded);
+      renderDriveList(drives);
+      renderOverviewOnMap();
+      updateRevertButton();
+      updateTessieButtonStates();
+    }
+  } finally {
+    hideLoading();
+  }
+}
+
+function updateTessieButtonStates() {
+  const hasFile = !!loadedFilePath;
+  const hasTessie = drives.some((d) => d.source === 'tessie');
+  document.getElementById('btn-import-tessie').disabled = !hasFile;
+  document.getElementById('btn-remove-tessie').disabled = !hasFile || !hasTessie;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
 }
 
 async function updateRevertButton() {
@@ -1015,6 +1400,7 @@ async function loadDrives() {
     renderOverviewOnMap();
     document.getElementById('btn-repair-gps').disabled = false;
     updateRevertButton();
+    updateTessieButtonStates();
   } finally {
     btn.textContent = 'Load Drives';
     btn.disabled = false;
@@ -1084,6 +1470,7 @@ function wireDriveTagInteractions(root, drive) {
 }
 
 function renderSelectedDriveStats(drive) {
+  const isTessie = drive.source === 'tessie';
   const totalMi = drive.distanceMi ?? 0;
   const totalMs = drive.durationMs ?? 0;
   const totalHrs = Math.floor(totalMs / 3_600_000);
@@ -1110,9 +1497,11 @@ function renderSelectedDriveStats(drive) {
     <div class="map-stat"><span class="map-stat-val">${durStr}</span><span class="map-stat-lbl">Duration</span></div>
     <div class="map-stat"><span class="map-stat-val">${speedVal(drive.avgSpeedMph ?? 0)}</span><span class="map-stat-lbl">Avg ${speedShort().toUpperCase()}</span></div>
     <div class="map-stat"><span class="map-stat-val">${speedVal(drive.maxSpeedMph ?? 0)}</span><span class="map-stat-lbl">Max ${speedShort().toUpperCase()}</span></div>
-    <div class="map-stat"><span class="map-stat-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span><span class="map-stat-lbl">FSD Usage</span></div>
+    <div class="map-stat"><span class="map-stat-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span><span class="map-stat-lbl">${isTessie ? 'FSD*' : 'FSD Usage'}</span></div>
   `;
-  if (apPct > 0) summary += `<div class="map-stat"><span class="map-stat-val">${apPct}%</span><span class="map-stat-lbl">Autopilot</span></div>`;
+  if (apPct > 0 && !isTessie) {
+    summary += `<div class="map-stat"><span class="map-stat-val">${apPct}%</span><span class="map-stat-lbl">Autopilot</span></div>`;
+  }
 
   const detailsRow = (label, cls, miles, pct) => `
     <div class="map-stats-row">
@@ -1136,7 +1525,32 @@ function renderSelectedDriveStats(drive) {
   }).join(', ');
 
   let details = '<div class="map-stats-details-title">Drive Breakdown</div>';
-  if (slices.length > 0) {
+  if (isTessie && slices.length === 0) {
+    details += `
+      <div class="map-stats-tessie-note" style="margin-top:0;padding:10px 0;">
+        Imported from Tessie. No per-point self-driving data available for
+        this drive. Excluded from aggregate FSD statistics.
+      </div>
+    `;
+  } else if (isTessie) {
+    details += `
+      <div class="map-stats-chart-wrap">
+        <div class="map-stats-chart" style="background: conic-gradient(${gradientStops});">
+          <div class="map-stats-chart-center">
+            <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
+          </div>
+        </div>
+        <div class="map-stats-legend">
+          ${fsdDistM > 0    ? detailsRow('Full Self-Driving', 'mode-fsd',    metersToDistStr(fsdDistM),    fsdPct)    : ''}
+          ${manualDistM > 0 ? detailsRow('Manual',            'mode-manual', metersToDistStr(manualDistM), manualPct) : ''}
+        </div>
+      </div>
+      <div class="map-stats-tessie-note">
+        *Imported from Tessie. Excluded from aggregate FSD score and
+        disengagement counts (those use dashcam telemetry only).
+      </div>
+    `;
+  } else if (slices.length > 0) {
     details += `
       <div class="map-stats-chart-wrap">
         <div class="map-stats-chart" style="background: conic-gradient(${gradientStops});">
@@ -1153,7 +1567,7 @@ function renderSelectedDriveStats(drive) {
       </div>
     `;
   }
-  if (disengagements > 0 || accelOverrides > 0) {
+  if (!isTessie && (disengagements > 0 || accelOverrides > 0)) {
     details += `
       <div class="map-stats-extras">
         <div><span class="map-stats-extra-val">${fmt(disengagements)}</span><span class="map-stats-extra-lbl">Disengagements</span></div>
@@ -1212,24 +1626,36 @@ async function populateUpdateModalChanges(version) {
 
 function renderDriveStats(drives, meta) {
   lastDrivesMeta = meta;
+  // Top-line counters (drives / miles / duration) include Tessie — those are
+  // ground truth from Tessie regardless of dashcam coverage.
+  // FSD analytics (FSD%, AP%, TACC%, disengagements, accel overrides) use
+  // SEI-only data because Tessie's per-point autopilot inference is fuzzier
+  // than the dashcam's SEI telemetry — mixing them would dilute the score.
+  const seiDrives = drives.filter((d) => d.source !== 'tessie');
+  const tessieCount = drives.length - seiDrives.length;
+
   const totalMi = drives.reduce((s, d) => s + d.distanceMi, 0);
   const totalMs = drives.reduce((s, d) => s + d.durationMs, 0);
   const totalHrs = Math.floor(totalMs / 3_600_000);
   const totalMin = Math.floor((totalMs % 3_600_000) / 60_000);
   const durStr = totalHrs > 0 ? `${totalHrs}H ${totalMin}M` : `${totalMin}M`;
 
-  const totalDistM = drives.reduce((s, d) => s + (d.distanceKm ?? d.distanceMi * 1.60934) * 1000, 0);
-  const fsdDistM = drives.reduce((s, d) => s + (d.fsdDistanceKm ?? d.fsdDistanceMi * 1.60934) * 1000, 0);
-  const apDistM = drives.reduce((s, d) => s + (d.autosteerDistanceKm ?? (d.autosteerDistanceMi ?? 0) * 1.60934) * 1000, 0);
-  const taccDistM = drives.reduce((s, d) => s + (d.taccDistanceKm ?? (d.taccDistanceMi ?? 0) * 1.60934) * 1000, 0);
-  const fsdPct = totalDistM > 0 ? Math.round((fsdDistM / totalDistM) * 100) : 0;
-  const apPct = totalDistM > 0 ? Math.round((apDistM / totalDistM) * 100) : 0;
-  const taccPct = totalDistM > 0 ? Math.round((taccDistM / totalDistM) * 100) : 0;
-  const manualDistM = Math.max(0, totalDistM - fsdDistM - apDistM - taccDistM);
+  // FSD analytics denominator: SEI-only distance.
+  const seiDistM = seiDrives.reduce((s, d) => s + (d.distanceKm ?? d.distanceMi * 1.60934) * 1000, 0);
+  const fsdDistM = seiDrives.reduce((s, d) => s + (d.fsdDistanceKm ?? d.fsdDistanceMi * 1.60934) * 1000, 0);
+  const apDistM = seiDrives.reduce((s, d) => s + (d.autosteerDistanceKm ?? (d.autosteerDistanceMi ?? 0) * 1.60934) * 1000, 0);
+  const taccDistM = seiDrives.reduce((s, d) => s + (d.taccDistanceKm ?? (d.taccDistanceMi ?? 0) * 1.60934) * 1000, 0);
+  const fsdPct = seiDistM > 0 ? Math.round((fsdDistM / seiDistM) * 100) : 0;
+  const apPct = seiDistM > 0 ? Math.round((apDistM / seiDistM) * 100) : 0;
+  const taccPct = seiDistM > 0 ? Math.round((taccDistM / seiDistM) * 100) : 0;
+  const manualDistM = Math.max(0, seiDistM - fsdDistM - apDistM - taccDistM);
   const manualPct = Math.max(0, 100 - fsdPct - apPct - taccPct);
 
-  const disengagements = drives.reduce((s, d) => s + (d.fsdDisengagements ?? 0), 0);
-  const accelOverrides = drives.reduce((s, d) => s + (d.fsdAccelPushes ?? 0), 0);
+  // For the donut chart denominator (locally rebound for clarity below).
+  const totalDistM = seiDistM;
+
+  const disengagements = seiDrives.reduce((s, d) => s + (d.fsdDisengagements ?? 0), 0);
+  const accelOverrides = seiDrives.reduce((s, d) => s + (d.fsdAccelPushes ?? 0), 0);
 
   const metersToDistStr = (m) => fmt(distVal(m / 1609.34, 0));
 
@@ -1281,7 +1707,7 @@ function renderDriveStats(drives, meta) {
       </div>
     `;
   }
-  const avgFsdPct = drives.length > 0 ? Math.round(drives.reduce((s, d) => s + (d.fsdPercent ?? 0), 0) / drives.length) : 0;
+  const avgFsdPct = seiDrives.length > 0 ? Math.round(seiDrives.reduce((s, d) => s + (d.fsdPercent ?? 0), 0) / seiDrives.length) : 0;
   if (disengagements > 0 || accelOverrides > 0) {
     details += `
       <div class="map-stats-extras">
@@ -1290,6 +1716,10 @@ function renderDriveStats(drives, meta) {
         <div><span class="map-stats-extra-val">${avgFsdPct}%</span><span class="map-stats-extra-lbl">Avg FSD Usage</span></div>
       </div>
     `;
+  }
+
+  if (tessieCount > 0) {
+    details += `<div class="map-stats-tessie-note">${fmt(tessieCount)} of these are Tessie-imported drive${tessieCount === 1 ? '' : 's'} (counted in totals; FSD analytics are dashcam-only)</div>`;
   }
 
   const panel = document.getElementById('map-stats');
@@ -1392,9 +1822,13 @@ function buildDriveItem(drive) {
     `<span class="tag-pill tag-removable" data-tag="${t}">${t}<button class="tag-remove" data-tag="${t}">&times;</button></span>`
   ).join('');
 
+  const sourceChip = drive.source === 'tessie'
+    ? '<span class="drive-source-chip">Tessie</span>'
+    : '';
+
   item.innerHTML = `
     <div class="drive-item-header">
-      <span class="drive-time-range">${startTime} — ${endTime}</span>
+      <span class="drive-time-range">${startTime} — ${endTime}${sourceChip}</span>
       ${badge ?? ''}
     </div>
     <div class="drive-item-stats">
@@ -1511,7 +1945,12 @@ function selectDrive(drive) {
     } else if (hideOtherDrives) {
       map.removeLayer(layer);
     } else if (layer.setStyle) {
-      layer.setStyle({ color: '#555566', opacity: 1 });
+      const isTessie = layer._source === 'tessie';
+      layer.setStyle({
+        color: isTessie ? '#7c3aed' : '#555566',
+        opacity: isTessie ? 0.7 : 1,
+        dashArray: isTessie ? '6 4' : null,
+      });
     }
   }
 
@@ -1538,7 +1977,14 @@ function applyOtherDrivesVisibility() {
       if (map.hasLayer(layer)) map.removeLayer(layer);
     } else {
       if (!map.hasLayer(layer)) layer.addTo(map);
-      if (layer.setStyle) layer.setStyle({ color: '#555566', opacity: 1 });
+      if (layer.setStyle) {
+        const isTessie = layer._source === 'tessie';
+        layer.setStyle({
+          color: isTessie ? '#7c3aed' : '#555566',
+          opacity: isTessie ? 0.7 : 1,
+          dashArray: isTessie ? '6 4' : null,
+        });
+      }
     }
   }
 }
@@ -1555,10 +2001,17 @@ function deselectDrive() {
   // Restore the aggregate stats in the map overlay.
   if (drives.length > 0 && lastDrivesMeta) renderDriveStats(drives, lastDrivesMeta);
 
-  // Restore overview lines to original style
+  // Restore overview lines to original style (Tessie drives keep purple/dashed)
   for (const layer of overviewLayers) {
     if (!map.hasLayer(layer)) layer.addTo(map);
-    if (layer.setStyle) layer.setStyle({ color: '#3b82f6', opacity: 0.5 });
+    if (layer.setStyle) {
+      const isTessie = layer._source === 'tessie';
+      layer.setStyle({
+        color: isTessie ? '#a855f7' : '#3b82f6',
+        opacity: isTessie ? 0.6 : 0.5,
+        dashArray: isTessie ? '6 4' : null,
+      });
+    }
   }
 
   // Fit map to all drives
@@ -1588,24 +2041,38 @@ function renderOverviewOnMap() {
 
   const allLatLngs = [];
 
-  // Draw one polyline per drive with downsampled points for performance
+  // Draw one polyline per drive with downsampled points for performance.
+  // Tessie-imported drives use a dashed purple line so provenance is obvious
+  // without having to rely on color alone (accessibility).
+  let anyTessie = false;
   for (const drive of drives) {
     if (!drive.points || drive.points.length < 2) continue;
     const lls = downsample(drive.points, 500).map((p) => [p[0], p[1]]);
     allLatLngs.push(...lls);
 
-    const line = L.polyline(lls, {
-      color: '#3b82f6',
+    const isTessie = drive.source === 'tessie';
+    if (isTessie) anyTessie = true;
+
+    const styleOpts = {
+      color: isTessie ? '#a855f7' : '#3b82f6',
       weight: getWeight(2.5),
-      opacity: 0.5,
+      opacity: isTessie ? 0.6 : 0.5,
       smoothFactor: 0.5,
-    }).addTo(map);
+    };
+    if (isTessie) styleOpts.dashArray = '6 4';
+
+    const line = L.polyline(lls, styleOpts).addTo(map);
     line._baseWeight = 2.5;
     line._driveId = drive.id;
+    line._source = drive.source ?? 'sei';
 
     line.on('click', (e) => { L.DomEvent.stopPropagation(e); selectDrive(drive); });
     overviewLayers.push(line);
   }
+
+  // Toggle the Tessie legend entry based on whether any imported drives exist.
+  const tessieLegend = document.querySelector('.legend-tessie');
+  if (tessieLegend) tessieLegend.classList.toggle('hidden', !anyTessie);
 
   if (allLatLngs.length > 0) {
     map.fitBounds(L.latLngBounds(allLatLngs), { padding: [30, 30] });
@@ -1645,7 +2112,11 @@ function drawSelectedDrive(drive) {
   if (!pts || pts.length < 2) return;
 
   const fsd = drive.fsdStates;
-  const hasFSD = Array.isArray(fsd) && fsd.length === pts.length;
+  const isTessie = drive.source === 'tessie';
+  // Tessie API drives have per-point autopilot from the /path endpoint, so
+  // we segment them too — just with a dashed line so the lower-fidelity
+  // source stays visually distinct from native SEI.
+  const hasFSD = Array.isArray(fsd) && fsd.length === pts.length && fsd.some((s) => s !== 0);
   const latLngs = pts.map((p) => [p[0], p[1]]);
 
   if (hasFSD) {
@@ -1659,16 +2130,28 @@ function drawSelectedDrive(drive) {
       const seg = latLngs.slice(i, Math.min(j + 1, pts.length));
       const baseW = 5;
       if (seg.length >= 2) {
-        const line = L.polyline(seg, {
-          color: engaged ? '#22cc55' : '#2266cc',
+        const styleOpts = {
+          color: engaged ? '#22cc55' : (isTessie ? '#a855f7' : '#2266cc'),
           weight: getWeight(baseW),
           opacity: 0.95,
-        }).addTo(map);
+        };
+        if (isTessie) styleOpts.dashArray = '8 5';
+        const line = L.polyline(seg, styleOpts).addTo(map);
         line._baseWeight = baseW;
         selectedLayers.push(line);
       }
       i = j;
     }
+  } else if (isTessie) {
+    // Tessie drive with no per-point FSD data (CSV import or missing path).
+    const line = L.polyline(latLngs, {
+      color: '#a855f7',
+      weight: getWeight(5),
+      opacity: 0.95,
+      dashArray: '8 5',
+    }).addTo(map);
+    line._baseWeight = 5;
+    selectedLayers.push(line);
   } else {
     const line = L.polyline(latLngs, {
       color: '#2266cc',
@@ -1721,11 +2204,12 @@ function drawSelectedDrive(drive) {
   // Fit map to selected drive
   map.fitBounds(L.latLngBounds(latLngs), { padding: [50, 50] });
 
-  // Show legend if FSD data present
-  if (hasFSD) {
-    document.getElementById('map-legend').classList.remove('hidden');
+  // Show legend if FSD data present or this is a Tessie drive
+  const legend = document.getElementById('map-legend');
+  if (hasFSD || isTessie) {
+    legend.classList.remove('hidden');
   } else {
-    document.getElementById('map-legend').classList.add('hidden');
+    legend.classList.add('hidden');
   }
 
   // Add replay marker at start (navigation arrow, rotatable).

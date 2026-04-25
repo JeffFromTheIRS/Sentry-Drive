@@ -68,6 +68,7 @@ export function groupIntoDrives(routes) {
       seen.add(norm);
       unique.push({
         ...r,
+        source: r.source ?? "sei",
         autopilotStates: decodeByteField(r.autopilotStates),
         gearStates: decodeByteField(r.gearStates),
       });
@@ -100,10 +101,14 @@ export function groupIntoDrives(routes) {
   }
   timeGroups.push(current);
 
-  // Second pass: split each time group further by gear state
+  // Second pass: split each time group further by gear state,
+  // then by externalSignature so imported drives (Tessie) stay
+  // one-per-drive regardless of time/gear spacing.
   const groups = [];
   for (const tg of timeGroups) {
-    groups.push(...splitByGearState(tg));
+    for (const gearGroup of splitByGearState(tg)) {
+      groups.push(...splitByExternalSignature(gearGroup));
+    }
   }
 
   // Build drive stats
@@ -114,6 +119,36 @@ export function groupIntoDrives(routes) {
     routeCount: timed.length,
     droppedCount: unique.length - timed.length,
   };
+}
+
+/**
+ * Split a group by externalSignature. Clips without a signature (native SEI)
+ * stay as one group. Consecutive clips with different signatures become
+ * separate groups. This is how we keep Tessie-imported drives from being
+ * merged with each other — grouper's time-gap / park-gap heuristics can't
+ * reliably tell two back-to-back Tessie drives apart, but the signature
+ * (baked into the clip at import time) is unambiguous.
+ */
+function splitByExternalSignature(group) {
+  if (group.length <= 1) return [group];
+  const hasAnySignature = group.some((c) => c.externalSignature);
+  if (!hasAnySignature) return [group];
+
+  // Bucket by signature regardless of in-group order — adjacent Tessie drives
+  // can have tied clip timestamps that interleave when sorted, so a
+  // consecutive-run splitter would fragment one drive into multiple pieces.
+  const buckets = new Map();
+  const noSig = [];
+  for (const clip of group) {
+    const sig = clip.externalSignature;
+    if (!sig) { noSig.push(clip); continue; }
+    if (!buckets.has(sig)) buckets.set(sig, []);
+    buckets.get(sig).push(clip);
+  }
+  const result = [];
+  if (noSig.length > 0) result.push(noSig);
+  for (const bucket of buckets.values()) result.push(bucket);
+  return result;
 }
 
 function splitByGearState(group) {
@@ -496,6 +531,11 @@ function buildDriveStats(clips, idx) {
     // Assisted aggregate (any state > 0 — for map/UI use)
     assistedPercent: pct(assistedDistanceM),
     routeFiles: clips.map((c) => c.file),
+    // Provenance: "sei" (native dashcam extraction) or "tessie" (imported).
+    // Defaults to "sei" on old files that predate the source field.
+    source: firstClip.source ?? "sei",
+    ...(firstClip.externalSignature ? { externalSignature: firstClip.externalSignature } : {}),
+    ...(firstClip.tessieAutopilotPercent != null ? { tessieAutopilotPercent: firstClip.tessieAutopilotPercent } : {}),
   };
 }
 
