@@ -897,8 +897,23 @@ html, body {
 
 .map-stats-chart-wrap {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 28px;
+}
+.map-stats-legend-divider {
+  border: none;
+  border-top: 1px solid var(--border-light);
+  margin: 6px 0;
+}
+.map-stats-legend-stats-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.map-stats-legend-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .map-stats-chart {
   width: 128px;

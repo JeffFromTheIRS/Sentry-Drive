@@ -1489,6 +1489,7 @@ function renderSelectedDriveStats(drive) {
 
   const disengagements = drive.fsdDisengagements ?? 0;
   const accelOverrides = drive.fsdAccelPushes ?? 0;
+  const fsdTimeMs = drive.fsdEngagedMs ?? 0;
 
   const metersToDistStr = (m) => fmt(distVal(m / 1609.34, 0));
 
@@ -1537,7 +1538,8 @@ function renderSelectedDriveStats(drive) {
       <div class="map-stats-chart-wrap">
         <div class="map-stats-chart" style="background: conic-gradient(${gradientStops});">
           <div class="map-stats-chart-center">
-            <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
+            <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdScoreLabel(fsdPct)}</span>
+            <span class="map-stats-chart-lbl" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
           </div>
         </div>
         <div class="map-stats-legend">
@@ -1555,7 +1557,8 @@ function renderSelectedDriveStats(drive) {
       <div class="map-stats-chart-wrap">
         <div class="map-stats-chart" style="background: conic-gradient(${gradientStops});">
           <div class="map-stats-chart-center">
-            <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
+            <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdScoreLabel(fsdPct)}</span>
+            <span class="map-stats-chart-lbl" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
           </div>
         </div>
         <div class="map-stats-legend">
@@ -1563,6 +1566,12 @@ function renderSelectedDriveStats(drive) {
           ${apDistM > 0     ? detailsRow('Autopilot',         'mode-ap',     metersToDistStr(apDistM),     apPct)     : ''}
           ${taccDistM > 0   ? detailsRow('TACC',              'mode-tacc',   metersToDistStr(taccDistM),   taccPct)   : ''}
           ${manualDistM > 0 ? detailsRow('Manual',            'mode-manual', metersToDistStr(manualDistM), manualPct) : ''}
+          ${fsdTimeMs > 0 ? `
+          <hr class="map-stats-legend-divider">
+          <div class="map-stats-legend-stat">
+            <span class="map-stats-extra-val">${formatDuration(fsdTimeMs)}</span>
+            <span class="map-stats-extra-lbl">Time with FSD</span>
+          </div>` : ''}
         </div>
       </div>
     `;
@@ -1606,6 +1615,13 @@ function fsdScoreColor(pct) {
   // Smooth red → amber → green gradient in HSL (0°=red, 120°=green).
   const hue = Math.max(0, Math.min(120, (pct / 100) * 120));
   return `hsl(${hue}, 70%, 55%)`;
+}
+
+function fsdScoreLabel(pct) {
+  if (pct >= 90) return 'Great';
+  if (pct >= 70) return 'Good';
+  if (pct >= 40) return 'Okay';
+  return 'Bad';
 }
 
 async function populateUpdateModalChanges(version) {
@@ -1656,6 +1672,9 @@ function renderDriveStats(drives, meta) {
 
   const disengagements = seiDrives.reduce((s, d) => s + (d.fsdDisengagements ?? 0), 0);
   const accelOverrides = seiDrives.reduce((s, d) => s + (d.fsdAccelPushes ?? 0), 0);
+  const fsdTimeMs = seiDrives.reduce((s, d) => s + (d.fsdEngagedMs ?? 0), 0);
+  const avgDisengagements = seiDrives.length > 0 ? (disengagements / seiDrives.length).toFixed(1) : '—';
+  const avgAccelOverrides = seiDrives.length > 0 ? (accelOverrides / seiDrives.length).toFixed(1) : '—';
 
   const metersToDistStr = (m) => fmt(distVal(m / 1609.34, 0));
 
@@ -1695,7 +1714,8 @@ function renderDriveStats(drives, meta) {
       <div class="map-stats-chart-wrap">
         <div class="map-stats-chart" style="background: conic-gradient(${gradientStops});">
           <div class="map-stats-chart-center">
-            <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
+            <span class="map-stats-chart-val" style="color:${fsdScoreColor(fsdPct)}">${fsdScoreLabel(fsdPct)}</span>
+            <span class="map-stats-chart-lbl" style="color:${fsdScoreColor(fsdPct)}">${fsdPct}%</span>
           </div>
         </div>
         <div class="map-stats-legend">
@@ -1703,6 +1723,21 @@ function renderDriveStats(drives, meta) {
           ${apDistM > 0     ? detailsRow('Autopilot',         'mode-ap',     metersToDistStr(apDistM),     apPct)     : ''}
           ${taccDistM > 0   ? detailsRow('TACC',              'mode-tacc',   metersToDistStr(taccDistM),   taccPct)   : ''}
           ${manualDistM > 0 ? detailsRow('Manual',            'mode-manual', metersToDistStr(manualDistM), manualPct) : ''}
+          <hr class="map-stats-legend-divider">
+          <div class="map-stats-legend-stats-row">
+            <div class="map-stats-legend-stat">
+              <span class="map-stats-extra-val">${formatDuration(fsdTimeMs)}</span>
+              <span class="map-stats-extra-lbl">Time with FSD</span>
+            </div>
+            <div class="map-stats-legend-stat">
+              <span class="map-stats-extra-val">${avgDisengagements}</span>
+              <span class="map-stats-extra-lbl">Avg Disengagements</span>
+            </div>
+            <div class="map-stats-legend-stat">
+              <span class="map-stats-extra-val">${avgAccelOverrides}</span>
+              <span class="map-stats-extra-lbl">Avg Overrides</span>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -2270,7 +2305,7 @@ function initReplay(drive) {
   slider.oninput = (e) => {
     if (replayPlaying) stopReplay();
     replayIdx = parseInt(e.target.value);
-    updateReplayPosition(replayIdx);
+    updateReplayPosition(replayIdx, true);
   };
 
   document.getElementById('btn-replay-play').onclick = toggleReplay;
@@ -2340,7 +2375,7 @@ function cycleReplaySpeed() {
   }
 }
 
-function updateReplayPosition(idx) {
+function updateReplayPosition(idx, snap = false) {
   if (!replayDrive) return;
   const pts = replayDrive.points;
   const pt = pts[idx];
@@ -2368,22 +2403,29 @@ function updateReplayPosition(idx) {
     const gearTransition = (gearNow !== gearPrev) || (gearNow !== gearNext);
 
     if (!gearTransition) {
-      // Gear-aware window-averaged bearing damps GPS jitter.
-      let bearing = smoothBearing(pts, idx, 7, gears);
+      // Scrubbing: window=1 for immediate bearing, no transition.
+      // Playback: window=7 circular mean to damp GPS jitter.
+      let bearing = smoothBearing(pts, idx, snap ? 1 : 7, gears);
 
       if (gearNow === 2) bearing = (bearing + 180) % 360; // reverse → flip to front
 
-      // Shortest-path tracking (Sentry-Studio approach): sign-preserving delta
-      // against the current winding avoids ±180 drift that would cumulate into
-      // a full 360° rotation.
-      let delta = bearing - (replayCurrentBearing % 360 + 360) % 360;
-      if (delta > 180) delta -= 360;
-      else if (delta < -180) delta += 360;
-      replayCurrentBearing += delta;
+      if (snap) {
+        // Snap directly — reset accumulated winding so subsequent playback
+        // starts from the correct angle with no leftover drift.
+        replayCurrentBearing = bearing;
+        arrow.style.transition = 'none';
+      } else {
+        // Shortest-path tracking: sign-preserving delta avoids ±180 drift
+        // that would accumulate into a full 360° rotation.
+        let delta = bearing - (replayCurrentBearing % 360 + 360) % 360;
+        if (delta > 180) delta -= 360;
+        else if (delta < -180) delta += 360;
+        replayCurrentBearing += delta;
 
-      // Adaptive transition: longer at slow playback, shorter at high speeds.
-      const transMs = Math.max(30, 150 / replaySpeed);
-      arrow.style.transition = `transform ${transMs}ms linear`;
+        // Adaptive transition: longer at slow playback, shorter at high speeds.
+        const transMs = Math.max(30, 150 / replaySpeed);
+        arrow.style.transition = `transform ${transMs}ms linear`;
+      }
       arrow.style.transform = `rotate(${replayCurrentBearing}deg)`;
     }
   }
