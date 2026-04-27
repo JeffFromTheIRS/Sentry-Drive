@@ -3,3 +3,4 @@ node_modules/
 dist/
 drive-data.json
 *.bak
+*.psd

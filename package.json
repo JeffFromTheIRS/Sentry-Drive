@@ -28,12 +28,13 @@
     "artifactName": "Sentry-Drive-Setup-${version}.${ext}",
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico"
+      "icon": "assets/sentrydrive.ico"
     },
     "mac": {
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }],
       "category": "public.app-category.utilities",
-      "artifactName": "Sentry-Drive-${version}-${arch}.${ext}"
+      "artifactName": "Sentry-Drive-${version}-${arch}.${ext}",
+      "icon": "assets/sentrydrive.icns"
     },
     "nsis": {
       "oneClick": false,
